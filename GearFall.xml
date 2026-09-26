@@ -1,0 +1,170 @@
+<Ui xmlns="http://www.blizzard.com/wow/ui/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.blizzard.com/wow/ui/ ../../../../FrameXML/UI.xsd">
+
+    <Button name="GearFallPriorityRowTemplate" virtual="true"
+            mixin="GearFallPriorityRowMixin">
+        <Size x="1" y="24"/>
+        <Layers>
+            <Layer level="BACKGROUND">
+                <Texture parentKey="Stripe" setAllPoints="true"/>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button parentKey="TagsButton" enableMouse="true">
+                <Size x="172" y="20"/>
+                <Anchors>
+                    <Anchor point="LEFT" x="369" y="0"/>
+                </Anchors>
+                <HighlightTexture file="Interface\Buttons\UI-Listbox-Highlight2" alphaMode="ADD"/>
+            </Button>
+            <Button parentKey="ScoreButton" enableMouse="true">
+                <Size x="112" y="20"/>
+                <Anchors>
+                    <Anchor point="LEFT" x="549" y="0"/>
+                </Anchors>
+                <HighlightTexture file="Interface\Buttons\UI-Listbox-Highlight2" alphaMode="ADD"/>
+            </Button>
+            <Button parentKey="RulesButton" enableMouse="true">
+                <Size x="101" y="20"/>
+                <Anchors>
+                    <Anchor point="LEFT" x="669" y="0"/>
+                </Anchors>
+                <HighlightTexture file="Interface\Buttons\UI-Listbox-Highlight2" alphaMode="ADD"/>
+            </Button>
+        </Frames>
+        <Scripts>
+            <OnLoad method="OnLoad"/>
+        </Scripts>
+    </Button>
+
+    <CheckButton name="GearFallItemButtonTemplate"
+                 inherits="CollectionsSpellButtonTemplate" virtual="true"
+                 mixin="GearFallItemButtonMixin">
+        <Scripts>
+            <OnLoad method="OnLoad"/>
+            <OnEnter method="OnEnter"/>
+            <OnLeave method="OnLeave"/>
+        </Scripts>
+    </CheckButton>
+
+    <!-- Distribution window (EM Triage pattern): docks next to the mailbox
+         and lists what to send where. -->
+    <Frame name="GearFallDistributionFrame"
+           inherits="PortraitFrameTemplate"
+           parent="UIParent"
+           toplevel="true" hidden="true"
+           enableMouse="true" movable="true" clampedToScreen="true"
+           resizable="true">
+        <Size x="480" y="500"/>
+        <ResizeBounds>
+            <minResize x="420" y="300"/>
+            <maxResize x="1280" y="1080"/>
+        </ResizeBounds>
+        <Anchors>
+            <Anchor point="CENTER"/>
+        </Anchors>
+        <Frames>
+            <Frame parentKey="SummaryBar">
+                <Size y="24"/>
+                <Anchors>
+                    <Anchor point="TOPLEFT" x="8" y="-32"/>
+                    <Anchor point="TOPRIGHT" x="-8" y="-32"/>
+                </Anchors>
+                <Layers>
+                    <Layer level="OVERLAY">
+                        <FontString parentKey="SummaryLabel" inherits="GameFontNormalLarge"
+                                    justifyH="CENTER" maxLines="1">
+                            <Anchors>
+                                <Anchor point="LEFT"/>
+                                <Anchor point="RIGHT"/>
+                            </Anchors>
+                        </FontString>
+                    </Layer>
+                </Layers>
+            </Frame>
+        </Frames>
+    </Frame>
+
+    <!-- Per-recipient mail confirmation (EM's EmpireManagerMailDialog) -->
+    <Frame name="GearFallMailDialog"
+           parent="UIParent"
+           toplevel="true" hidden="true"
+           enableMouse="true" movable="true" clampedToScreen="true"
+           frameStrata="HIGH"
+           inherits="BackdropTemplate">
+        <Size x="450" y="400"/>
+        <Anchors>
+            <Anchor point="CENTER"/>
+        </Anchors>
+        <Layers>
+            <Layer level="ARTWORK">
+                <FontString parentKey="TitleText" inherits="GameFontNormalLarge">
+                    <Anchors>
+                        <Anchor point="TOP" x="0" y="-24"/>
+                    </Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+        <Frames>
+            <Button parentKey="CloseButton" inherits="UIPanelCloseButton">
+                <Anchors>
+                    <Anchor point="TOPRIGHT" x="-2" y="-2"/>
+                </Anchors>
+            </Button>
+            <ScrollFrame parentKey="ScrollFrame" inherits="ScrollFrameTemplate">
+                <Anchors>
+                    <Anchor point="TOPLEFT" x="24" y="-56"/>
+                    <Anchor point="BOTTOMRIGHT" x="-32" y="44"/>
+                </Anchors>
+                <Frames>
+                    <Frame parentKey="Content">
+                        <Anchors>
+                            <Anchor point="TOPLEFT"/>
+                            <Anchor point="TOPRIGHT"/>
+                        </Anchors>
+                    </Frame>
+                </Frames>
+            </ScrollFrame>
+        </Frames>
+        <Scripts>
+            <OnDragStart>self:StartMoving()</OnDragStart>
+            <OnDragStop>self:StopMovingOrSizing()</OnDragStop>
+        </Scripts>
+    </Frame>
+
+    <Button name="GearFallDistributionRowTemplate" virtual="true"
+            mixin="GearFallDistributionRowMixin"
+            registerForClicks="LeftButtonUp">
+        <Size x="1" y="20"/>
+        <Layers>
+            <Layer level="BACKGROUND">
+                <Texture parentKey="Stripe" setAllPoints="true"/>
+            </Layer>
+            <Layer level="HIGHLIGHT">
+                <Texture parentKey="Highlight" alphaMode="ADD" setAllPoints="true">
+                    <Color r="1" g="1" b="1" a="0.08"/>
+                </Texture>
+            </Layer>
+        </Layers>
+        <Scripts>
+            <OnLoad method="OnLoad"/>
+            <OnClick method="OnClick"/>
+            <OnEnter method="OnEnter"/>
+            <OnLeave method="OnLeave"/>
+        </Scripts>
+    </Button>
+    <Button name="GearFallHistoryRowTemplate" virtual="true">
+        <Size x="1" y="20"/>
+        <Layers>
+            <Layer level="OVERLAY">
+                <FontString parentKey="Text" inherits="GameFontHighlightSmall"
+                            justifyH="LEFT" maxLines="1">
+                    <Anchors>
+                        <Anchor point="LEFT" x="4" y="0"/>
+                        <Anchor point="RIGHT" x="-4" y="0"/>
+                    </Anchors>
+                </FontString>
+            </Layer>
+        </Layers>
+    </Button>
+
+</Ui>

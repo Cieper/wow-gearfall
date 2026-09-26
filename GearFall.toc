@@ -1,0 +1,22 @@
+## Interface: 120100
+## Title: GearFall
+## Notes: Route Warbound/BoE gear to the alt that needs it most.
+## Version: 0.1.1
+## SavedVariables: GearFallDB
+
+Util.lua
+Core.lua
+Roster.lua
+Scan.lua
+ItemRoles.lua
+Eligibility.lua
+Scoring.lua
+Distribution.lua
+GearFall.xml
+UI_Shared.lua
+UI_Roster.lua
+UI_Sendable.lua
+UI_Priority.lua
+UI_Tags.lua
+UI_History.lua
+UI.lua
