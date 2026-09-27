@@ -133,7 +133,12 @@ end
 -- here; without this ledger we would happily mail a second, weaker upgrade
 -- into the same slot. Note there is no {worn, incoming} list iterated with
 -- ipairs here: a nil first element truncates that table, which would make
--- incoming-on-an-empty-slot invisible. Returns candValue, eqValue, eqSnap,
+-- incoming-on-an-empty-slot invisible. One exception keeps the ledger from
+-- biting its own owner: when the candidate IS the awaited copy and we are
+-- standing on its recipient, the incoming snapshot drops out of the
+-- comparison - the ledger would otherwise read the item's own arrival as
+-- "no upgrade" and evict the promised gear to the next alt (see
+-- IsArrivedIncomingItem). Returns candValue, eqValue, eqSnap,
 -- nil, blocked on success (blocked = statless quality gate, see
 -- StatlessBlocked) or nil, nil, nil, err on failure.
 -- Statless quality gate (Enum.ItemQuality: Poor=0, Common=1, Uncommon=2).
@@ -157,7 +162,26 @@ local function StatlessBlocked(candidateQuality, snaps)
     return false
 end
 
-local function evalSlot(provider, itemInfo, alt, slot)
+-- Is this scanned item the very copy the ledger is holding a slot for?
+-- Identity is the ITEM ID plus item level, never the link string: the same
+-- physical item can render with different suffix forms across clients and
+-- cache states (the same lesson the loot executor's FindByItemID learned).
+-- Both levels must be known and equal - a scan with a cold itemLevel cache
+-- stays blocked rather than guessing.
+function addon.IsArrivedIncomingItem(itemInfo, inc)
+    if not itemInfo or not inc then
+        return false
+    end
+    local candID = addon.GetItemID(itemInfo.itemLink)
+    local incID = addon.GetItemID(inc.itemLink)
+    if not candID or not incID or candID ~= incID then
+        return false
+    end
+    return itemInfo.itemLevel ~= nil and inc.itemLevel ~= nil
+        and itemInfo.itemLevel == inc.itemLevel
+end
+
+local function evalSlot(provider, itemInfo, alt, slot, isMyAlt)
     local candValue, err = provider.GetScore(itemInfo, alt, slot)
     if candValue == nil then
         return nil, nil, nil, err
@@ -169,6 +193,16 @@ local function evalSlot(provider, itemInfo, alt, slot)
         snaps[#snaps + 1] = worn
     end
     local incoming = alt.incoming and alt.incoming[slot]
+    if incoming and isMyAlt and incoming.mailIncoming
+        and not incoming.draftIncoming
+        and addon.IsArrivedIncomingItem(itemInfo, incoming) then
+        -- the candidate IS the awaited copy and its owner is the character
+        -- we are playing: score against the worn gear only. Draft-sim
+        -- projections (draftIncoming) and duplicates sitting on the
+        -- SENDER's side never unblock - only the real send-time ledger
+        -- entry (mailIncoming) may recognize its own arrival.
+        incoming = nil
+    end
     if incoming then
         snaps[#snaps + 1] = incoming
     end
@@ -221,6 +255,8 @@ function addon.ScoreItemForAlt(itemInfo, alt)
     -- raw item level (under Pawn a lower-ilvl ring with better stats can
     -- outscore a higher-ilvl one), and Pawn scores the same weapon
     -- differently per hand, so dual-wield offers need true per-slot math.
+    local myKey = addon.PlayerKey and addon.PlayerKey()
+    local isMyAlt = myKey ~= nil and alt == GearFallDB.alts[myKey]
     local targetSlots = (candidateSlots and not slotFixed)
         and candidateSlots or { slotID }
     local evals, evalErr
@@ -228,7 +264,7 @@ function addon.ScoreItemForAlt(itemInfo, alt)
         evals, evalErr = {}, nil
     for _, slot in ipairs(targetSlots) do
         local candValue, eqValue, snap, err, blocked =
-            evalSlot(provider, itemInfo, alt, slot)
+            evalSlot(provider, itemInfo, alt, slot, isMyAlt)
         if candValue == nil then
             evals, evalErr = nil, err
             break

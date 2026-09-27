@@ -113,14 +113,60 @@ function addon.BuildDistributionSuggestions()
     end
 
     local upgradeQueue, holds = {}, {}
+    -- declared before the scan loop: pinned arrivals project into the same
+    -- sim ledger the queue re-scores against, so duplicate copies and later
+    -- candidates see them
+    local sim = {}
+    local selfkeep = {}
     local myKey = addon.PlayerKey and addon.PlayerKey()
+    local myAlt = myKey and GearFallDB.alts[myKey] or nil
     for _, info in ipairs(scanned) do
         if info.eligible then
             -- spot is the location stamped by the scans ("0:3" for bags,
             -- "mail:1:2" for inbox attachments)
             local rowKey = info.spot
                 or ("%d:%d"):format(info.bagID or 0, info.slotIndex or 0)
-            do
+            -- An item the ledger promised to the CURRENT character that
+            -- just showed up in their own inventory (bags or inbox) is the
+            -- arrival itself: pin it as "keep for yourself" instead of
+            -- re-drafting. Without this, the ledger that prevents
+            -- double-mailing reads the item's own arrival as "not an
+            -- upgrade" and ships the promised gear to the next alt down.
+            -- The pin only fires while the item is still an upgrade for
+            -- them (delta > 0): if something better got equipped in the
+            -- meantime, the promise is superseded and the normal draft
+            -- re-offers the copy down the priority list. One copy per
+            -- promise: the first pin projects into the sim ledger, so a
+            -- second identical copy competes normally (Left over or the
+            -- next alt wins it).
+            local pinned = false
+            if myAlt and myAlt.incoming then
+                for _, inc in pairs(myAlt.incoming) do
+                    if inc.mailIncoming
+                        and addon.IsArrivedIncomingItem(info, inc) then
+                        local res = addon.ScoreItemForAlt(info, myAlt)
+                        if res.eligible and (res.delta or 0) > 0
+                            and not (sim[myKey] and sim[myKey][res.slotID]) then
+                            selfkeep[#selfkeep + 1] = {
+                                kind = "selfkeep", item = info,
+                                altKey = myKey, result = res,
+                                rowKey = rowKey, arrived = true,
+                            }
+                            sim[myKey] = sim[myKey] or {}
+                            sim[myKey][res.slotID] = {
+                                itemLink = info.itemLink,
+                                itemLevel = info.itemLevel,
+                                name = info.name,
+                                quality = info.quality,
+                                draftIncoming = true,
+                            }
+                            pinned = true
+                        end
+                        break
+                    end
+                end
+            end
+            if not pinned then
                 local matches, advice = addon.FindBestAltsForItem(info)
                 -- the current character competes like any other alt: when
                 -- they win under the active strategy, the item stays (equip
@@ -196,9 +242,7 @@ function addon.BuildDistributionSuggestions()
         return (a.rowKey or "") < (b.rowKey or "")
     end)
 
-    local sim = {}
     local drafted, leftover = {}, {}
-    local selfkeep = {}
     local strategy = addon.SettingChoice("draftStrategy")
     local function TierOf(m)
         return (m.alt.prioTier or 9999)
@@ -1601,8 +1645,13 @@ function GearFallDistributionRowMixin:Populate(data)
             AltDisplayName(data.altKey), FormatDelta(data.result)))
         self.actionFs:SetTextColor(0.3, 1, 0.3)
     elseif data.kind == "selfkeep" then
-        self.actionFs:SetText(("Keep - equip it  (%s)"):format(
-            FormatDelta(data.result)))
+        if data.arrived then
+            self.actionFs:SetText(("Arrived - equip it  (%s)"):format(
+                FormatDelta(data.result)))
+        else
+            self.actionFs:SetText(("Keep - equip it  (%s)"):format(
+                FormatDelta(data.result)))
+        end
         self.actionFs:SetTextColor(0.3, 1, 0.3)
     elseif data.kind == "leftover" then
         self.actionFs:SetText("Left over - nobody still needs it")
@@ -1664,8 +1713,14 @@ function GearFallDistributionRowMixin:OnEnter()
             quality = data.result.equippedQuality,
         }) or "|cff808080(empty slot)|r"
         if data.kind == "selfkeep" then
-            GameTooltip:AddLine(("Keep it - equipping beats mailing (%s)"):format(
-                FormatDelta(data.result)), 0.3, 1, 0.3, true)
+            if data.arrived then
+                GameTooltip:AddLine(
+                    ("This is the upgrade mailed to you - equip it (%s)"):format(
+                    FormatDelta(data.result)), 0.3, 1, 0.3, true)
+            else
+                GameTooltip:AddLine(("Keep it - equipping beats mailing (%s)")
+                    :format(FormatDelta(data.result)), 0.3, 1, 0.3, true)
+            end
         elseif data.result.equippedIncoming then
             GameTooltip:AddLine(("Incoming for %s: %s  %s"):format(
                 AltDisplayName(data.altKey), eq, FormatDelta(data.result)),
