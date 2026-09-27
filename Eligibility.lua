@@ -439,14 +439,41 @@ end
 -- is comes from the item subclass (2/10 staff, 2/5 two-handed mace, ...).
 local TWO_HANDED_INV_TYPES = { INVTYPE_2HWEAPON = true }
 
+-- ranged weapons fill the whole load-out like a two-hander: Blizzard's own
+-- transmog grouping puts INVTYPE_2HWEAPON, INVTYPE_RANGED and
+-- INVTYPE_RANGEDRIGHT in the same "two-hand" selection class. Modern items
+-- report INVTYPE_RANGED (RANGEDRIGHT is the pre-Midnight ranged slot); the
+-- one-hander among them is the wand, carved out by SUBCLASS below - a wand
+-- pairs with an offhand frill, a gun/bow/crossbow never pairs with anything
+local RANGED_TWO_HAND_INV_TYPES = {
+    INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true,
+}
+
 local WEAPON_INV_TYPES = {
     INVTYPE_WEAPON = true, INVTYPE_WEAPONMAINHAND = true,
     INVTYPE_WEAPONOFFHAND = true, INVTYPE_SHIELD = true,
     INVTYPE_HOLDABLE = true, INVTYPE_2HWEAPON = true,
+    INVTYPE_RANGED = true, INVTYPE_RANGEDRIGHT = true,
 }
 
-local function IsTwoHanded(invType)
-    return invType ~= nil and TWO_HANDED_INV_TYPES[invType] == true
+local function IsTwoHanded(invType, subclass)
+    if invType == nil then
+        return false
+    end
+    if TWO_HANDED_INV_TYPES[invType] == true then
+        return true
+    end
+    if not RANGED_TWO_HAND_INV_TYPES[invType] then
+        return false
+    end
+    -- a known subclass decides exactly; a snapshot saved by an older build
+    -- has none, so guess by invType: RANGEDRIGHT was hunter-ranged only
+    -- (never a wand) and fails closed, bare RANGED fails open (wand-safe)
+    -- until the next capture records the subclass
+    if subclass == nil then
+        return invType == "INVTYPE_RANGEDRIGHT"
+    end
+    return subclass ~= WSub.Wand
 end
 
 local function IsWeaponish(invType)
@@ -490,7 +517,7 @@ local IGNORED_INV_TYPES = { INVTYPE_BODY = true, INVTYPE_TABARD = true,
 
 -- returns slotID (nil = not a slot we track), plus a candidate-slot list
 -- for items that fit two slots (fingers, trinkets)
-local function GetTargetSlots(invType, itemClass)
+local function GetTargetSlots(invType, itemClass, subclass)
     if not invType or IGNORED_INV_TYPES[invType] then
         return nil
     end
@@ -504,7 +531,7 @@ local function GetTargetSlots(invType, itemClass)
         return slot
     end
     if IsWeaponish(invType) then
-        if IsTwoHanded(invType) then
+        if IsTwoHanded(invType, subclass) then
             return 16
         end
         if OFFHAND_SLOT_INV_TYPES[invType] then
@@ -523,7 +550,7 @@ end
 
 -- exported for UI/ordering: which inventory slot does this item target?
 function addon.TargetSlotFor(itemInfo)
-    return GetTargetSlots(itemInfo.invType, itemInfo.class)
+    return GetTargetSlots(itemInfo.invType, itemInfo.class, itemInfo.subclass)
 end
 
 -- Minimal class+spec identity for the static question: the evaluator and
@@ -550,7 +577,8 @@ local function SpecUsesItemOn(itemInfo, probe)
         return false, "Unknown inventory slot", "no"
     end
 
-    local slotID, dualSlots = GetTargetSlots(invType, itemInfo.class)
+    local slotID, dualSlots = GetTargetSlots(invType, itemInfo.class,
+        itemInfo.subclass)
     if not slotID then
         return false, ("No inventory slot for %s"):format(invType), "no"
     end
@@ -778,18 +806,23 @@ function addon.IsItemEligibleForAlt(itemInfo, alt)
     -- weapon load-out blocks are all "eventually": one vendor visit away;
     -- skippable entirely for players who mail whole load-out swap sets
     if not addon.SettingIsOn("allowWeaponLoadoutSwap", alt) then
-        if IsTwoHanded(invType) then
+        -- two-handers are 2HWEAPON plus ranged (gun/bow/crossbow; the wand
+        -- subclass is carved out): a ranged candidate lands here too, so a
+        -- gun-to-gun swap stays shape-preserving and never hits (b)/(c)
+        if IsTwoHanded(invType, itemInfo.subclass) then
             -- allowed when the offhand is empty or holds a weapon (dual-wield swap)
             if offhand and offhand.invType and not IsEquippedWeaponish(offhand) then
                 return "eventually", "Offhand holds a shield; Item is a two-hander"
             end
         elseif slotID == 16 then
-            -- one-handed mainhands (incl. wands and ranged weapons)
-            if mainhand and mainhand.invType and IsTwoHanded(mainhand.invType) then
+            -- one-handed mainhand melee and wands
+            if mainhand and mainhand.invType
+                and IsTwoHanded(mainhand.invType, mainhand.subclass) then
                 return "eventually", "Character is currently set up with a two-handed weapon"
             end
         elseif slotID == 17 then
-            if mainhand and mainhand.invType and IsTwoHanded(mainhand.invType) then
+            if mainhand and mainhand.invType
+                and IsTwoHanded(mainhand.invType, mainhand.subclass) then
                 return "eventually", "Character is currently set up with a two-handed weapon"
             end
             if offhand and offhand.invType then
@@ -827,7 +860,15 @@ function addon.IsItemEligibleForAlt(itemInfo, alt)
                 local category = offhand and offhand.invType
                     and OffhandCategory(offhand.invType)
                 if not category or category == "weapon" then
-                    dualWieldSlots[2] = 17
+                    -- a ranged mainhand (gun/bow/crossbow) fills the whole
+                    -- load-out: no second weapon can pair with it, swap
+                    -- setting or not. invType-only check is airtight here -
+                    -- no wand-wielding spec has a dual policy, so a RANGED
+                    -- snapshot on this path is always a real ranged weapon
+                    if not (mainhand and mainhand.invType
+                        and RANGED_TWO_HAND_INV_TYPES[mainhand.invType]) then
+                        dualWieldSlots[2] = 17
+                    end
                 end
             end
         end

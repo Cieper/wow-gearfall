@@ -101,6 +101,14 @@ function addon.CaptureSnapshot(reason, attempt)
                     or (sameOld and sameOld.itemLevel)
                 local invType = select(4, C_Item.GetItemInfoInstant(raw or id))
                     or (sameOld and sameOld.invType)
+                -- weapon subclass (bow vs wand vs sword): the invType only
+                -- says WHICH HAND, and the ranged load-out rules need the
+                -- weapon kind to tell a gun (two-hand equivalent) from a
+                -- wand (one-handed, pairs with an offhand frill)
+                local subclass = select(3, C_Item.GetItemInfoInstant(raw or id))
+                if type(subclass) ~= "number" then
+                    subclass = sameOld and sameOld.subclass
+                end
                 if not itemName or not itemLevel or not invType then
                     uncached = true
                     addon.DebugPrint(("debug: unexpected data [%02d %s] id=%s ilvl=%s invType=%s name=%s"):format(
@@ -118,6 +126,7 @@ function addon.CaptureSnapshot(reason, attempt)
                     itemLink = raw or (sameOld and sameOld.itemLink),
                     itemLevel = itemLevel or (sameOld and sameOld.itemLevel),
                     invType = invType,
+                    subclass = subclass,
                     name = itemName or (sameOld and sameOld.name),
                     quality = itemQuality or (sameOld and sameOld.quality),
                 }
