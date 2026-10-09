@@ -11,6 +11,10 @@ Scan.lua
 ItemRoles.lua
 Eligibility.lua
 Scoring.lua
+Distribution_Draft.lua
+Distribution_Send.lua
+Distribution_Loot.lua
+Distribution_Equip.lua
 Distribution.lua
 GearFall.xml
 UI_Shared.lua
