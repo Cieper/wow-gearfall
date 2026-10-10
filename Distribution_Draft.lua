@@ -115,7 +115,8 @@ function addon.BuildDistributionSuggestions()
     for _, info in ipairs(scanned) do
         if info.eligible then
             -- spot is the location stamped by the scans ("0:3" for bags,
-            -- "mail:1:2" for inbox attachments)
+            -- "mail:1:2" for inbox attachments, "bank:1:1"/"wbank:1:1"
+            -- for bank/Warbank tabs)
             local rowKey = info.spot
                 or ("%d:%d"):format(info.bagID or 0, info.slotIndex or 0)
             -- An item the ledger promised to the CURRENT character that
@@ -352,20 +353,24 @@ function addon.BuildDistributionSuggestions()
     -- "Left over" headers stay alt-less and never grow a mail icon.
     -- mailCount = how many of those rows are still inbox attachments -
     -- the envelope icon's count and its "anything to loot?" gate.
+    -- bankCount = how many still sit in a bank/Warbank tab - the chest
+    -- icon's count and its "anything to withdraw?" gate.
     local function addHeader(title, r, g, b, label, items, altKey)
-        local rowKeys, mailCount = {}, 0
+        local rowKeys, mailCount, bankCount = {}, 0, 0
         for _, it in ipairs(items or {}) do
             if it.rowKey then
                 rowKeys[#rowKeys + 1] = it.rowKey
             end
             if it.item and it.item.location == "mail" then
                 mailCount = mailCount + 1
+            elseif it.item and it.item.location == "bank" then
+                bankCount = bankCount + 1
             end
         end
         suggestions[#suggestions + 1] = {
             kind = "header", title = title, r = r, g = g, b = b,
             label = label, rowKeys = rowKeys, mailCount = mailCount,
-            altKey = altKey,
+            bankCount = bankCount, altKey = altKey,
         }
     end
 

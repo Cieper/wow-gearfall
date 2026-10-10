@@ -176,6 +176,11 @@ function GearFallItemButtonMixin:OnEnter()
     addon._bagAdvicePaused = (self.itemData._verdict ~= nil) or nil
     if self.itemData.bagID then
         GameTooltip:SetBagItem(self.itemData.bagID, self.itemData.slotIndex)
+    elseif self.itemData.tabID then
+        -- bank/Warbank rows: bank tabs are container IDs, so the same
+        -- SetBagItem path works (and the generic advice hook reads the
+        -- bank coordinates the same way it reads bag ones)
+        GameTooltip:SetBagItem(self.itemData.tabID, self.itemData.slotIndex)
     elseif self.itemData.mailIndex and GameTooltip.SetInboxItem then
         GameTooltip:SetInboxItem(self.itemData.mailIndex,
             self.itemData.attachIndex)
@@ -407,10 +412,12 @@ function addon.BuildItemsPage(parent)
     inset.OnPageChanged = OnPagerPageChanged
 
     -- live refresh while the tab is open: BAG_UPDATE_DELAYED covers loot,
-    -- vendor, delete, trade, and mail; UNIT_INVENTORY_CHANGED covers equips;
-    -- MAIL_SHOW/MAIL_INBOX_UPDATE cover the inbox second-inventory while a
-    -- mailbox is open. Bursts fire these repeatedly, so a short timer
-    -- coalesces them.
+    -- vendor, delete, trade, mail, and the bag side of every bank deposit
+    -- or withdrawal; UNIT_INVENTORY_CHANGED covers equips;
+    -- MAIL_SHOW/MAIL_INBOX_UPDATE cover the inbox second-inventory and
+    -- BANKFRAME_OPENED/CLOSED the bank third-inventory (a freshly opened
+    -- bank reveals candidates no bag event announces). Bursts fire these
+    -- repeatedly, so a short timer coalesces them.
     local rescanPending
     page:SetScript("OnEvent", function(self, event, unit)
         if event == "UNIT_INVENTORY_CHANGED" and unit ~= "player" then
@@ -442,6 +449,8 @@ function addon.BuildItemsPage(parent)
         self:RegisterEvent("UNIT_INVENTORY_CHANGED")
         self:RegisterEvent("MAIL_SHOW")
         self:RegisterEvent("MAIL_INBOX_UPDATE")
+        self:RegisterEvent("BANKFRAME_OPENED")
+        self:RegisterEvent("BANKFRAME_CLOSED")
         RebuildItemsTab()
     end)
     page:SetScript("OnHide", function(self)
@@ -449,6 +458,8 @@ function addon.BuildItemsPage(parent)
         self:UnregisterEvent("UNIT_INVENTORY_CHANGED")
         self:UnregisterEvent("MAIL_SHOW")
         self:UnregisterEvent("MAIL_INBOX_UPDATE")
+        self:UnregisterEvent("BANKFRAME_OPENED")
+        self:UnregisterEvent("BANKFRAME_CLOSED")
     end)
 
     return page

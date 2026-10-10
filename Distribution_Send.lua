@@ -14,9 +14,11 @@ local SUBJECT = "GearFall"
 function addon.PlanDistributionMail(suggestions)
     local byRecipient, recipients = {}, {}
     for _, s in ipairs(suggestions or {}) do
-        -- mailbox attachments cannot be picked up for mailing: they are
-        -- scan-only candidates the user must claim manually first
-        if s.kind == "upgrade" and s.item.location ~= "mail" then
+        -- only bag copies can be attached to a letter: mail attachments are
+        -- scan-only candidates the user must claim first, and bank/Warbank
+        -- items must be withdrawn into the bags before the pickup-attach
+        -- dance can reach them
+        if s.kind == "upgrade" and s.item.location == "bag" then
             local recipient = addon.MailRecipientFor(s.altKey)
             if not byRecipient[recipient] then
                 recipients[#recipients + 1] = recipient

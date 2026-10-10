@@ -108,7 +108,7 @@ end
 
 -- Every scanned item carries a `spot`: a namespaced location string that
 -- doubles as the rowKey everywhere downstream (skip state, verdict maps).
--- Bag items and mail attachments can never collide.
+-- Bag, mail, and bank spots can never collide.
 function addon.ScanBagsForEligibleItems()
     local results = {}
     for bagID = 0, NUM_BAG_SLOTS do
@@ -186,6 +186,75 @@ function addon.ScanMailForEligibleItems()
     return results
 end
 
+-- The bank as a third inventory, scanned while the bank frame is open
+-- (addon._bankOpen, the Distribution window's own gate). Bank tabs are
+-- plain container IDs: Blizzard's own BankPanel reads them with
+-- C_Container.GetContainerNumSlots / GetContainerItemInfo, so the per-slot
+-- walk is the bag walk over different container IDs. Tab handles come from
+-- C_Bank.FetchPurchasedBankTabData (only purchased tabs exist) and are
+-- gated on C_Bank.CanViewBank - the same visibility guard Blizzard's tab
+-- system uses. Character bank and Warbank (Enum.BankType.Account) are both
+-- scanned; their spots are namespaced separately ("bank:tab:slot" vs
+-- "wbank:tab:slot", tabIndex = position in the purchased-tab list, not the
+-- client's container ID) so the shared Warbank contents can be told apart
+-- from this realm's private bank downstream. The bind gate is the bag gate
+-- on purpose: a bank can store soulbound items, and only movable copies
+-- are distribution candidates.
+local BANK_SCANS = {
+    { name = "character", prefix = "bank",
+        enum = function()
+            return Enum and Enum.BankType and Enum.BankType.Character
+        end },
+    { name = "account", prefix = "wbank",
+        enum = function()
+            return Enum and Enum.BankType and Enum.BankType.Account
+        end },
+}
+
+function addon.ScanBankForEligibleItems()
+    local results = {}
+    if not (C_Bank and C_Bank.FetchPurchasedBankTabData
+            and C_Bank.CanViewBank and C_Container
+            and C_Container.GetContainerNumSlots
+            and C_Container.GetContainerItemInfo) then
+        return results
+    end
+    for _, scan in ipairs(BANK_SCANS) do
+        local bankType = scan.enum()
+        if bankType and C_Bank.CanViewBank(bankType) then
+            local tabs = C_Bank.FetchPurchasedBankTabData(bankType)
+            for tabIndex, tabData in ipairs(tabs or {}) do
+                local tabID = tabData and tabData.ID
+                local numSlots = tabID
+                    and C_Container.GetContainerNumSlots(tabID) or 0
+                for slotIndex = 1, numSlots do
+                    local containerItem =
+                        C_Container.GetContainerItemInfo(tabID, slotIndex)
+                    if containerItem and containerItem.hyperlink then
+                        local info = addon.GetBindInfo(containerItem.hyperlink,
+                            tabID, slotIndex)
+                        info.location = "bank"
+                        info.bankType = scan.name
+                        info.tabID = tabID
+                        info.slotIndex = slotIndex
+                        info.spot = ("%s:%d:%d"):format(scan.prefix,
+                            tabIndex, slotIndex)
+                        info.quantity = containerItem.stackCount
+                        -- FR-9 per-instance identity works for bank slots
+                        -- the same way it does for bags: bank coordinates
+                        -- are real ItemLocations
+                        info.guid = C_Item.GetItemGUID(
+                            ItemLocation:CreateFromBagAndSlot(tabID,
+                                slotIndex))
+                        results[#results + 1] = info
+                    end
+                end
+            end
+        end
+    end
+    return results
+end
+
 -- FR-9: is this item on an ignore list? Checked in tier order - the
 -- shipped defaults win over the user's permanent itemID ignores, which win
 -- over a single-copy GUID ignore. Returns the tier name for diagnostics,
@@ -210,7 +279,8 @@ function addon.IsIgnored(info)
 end
 
 -- Everything that could be distributed right now: bag items always, plus
--- the inbox while a mailbox is open (the Distribution window's own gate).
+-- the inbox while a mailbox is open and the bank/Warbank tabs while the
+-- bank frame is open (each is the Distribution window's own gate).
 -- Ignored items are dropped at this single choke point - nothing
 -- downstream ever sees them. The second return reports how many were
 -- dropped per tier for /gear scan diagnostics.
@@ -230,6 +300,11 @@ function addon.ScanEligibleItems()
     end
     if addon._mailboxOpen then
         for _, info in ipairs(addon.ScanMailForEligibleItems()) do
+            consider(info)
+        end
+    end
+    if addon._bankOpen then
+        for _, info in ipairs(addon.ScanBankForEligibleItems()) do
             consider(info)
         end
     end

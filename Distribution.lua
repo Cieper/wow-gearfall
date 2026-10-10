@@ -91,6 +91,61 @@ function GearFallDistributionRowMixin:OnLoad()
         GameTooltip:Show()
     end)
     self.mailBtn:SetScript("OnLeave", GameTooltip_Hide)
+    -- bank badge: same role as the envelope, for rows whose item still
+    -- sits in a bank/Warbank tab - a chest (the banker gossip icon) that
+    -- is also a withdraw button: an item row's chest withdraws exactly
+    -- that item, a character header's chest withdraws every drafted bank
+    -- item for that character. The plan comes from the addon namespace and
+    -- ExecuteLoot dispatches by source, so mid-run clicks are no-ops via
+    -- the executor's own mutual-exclusion guard
+    self.bankIcon = self:CreateTexture(nil, "OVERLAY")
+    self.bankIcon:SetSize(12, 12)
+    self.bankIcon:SetPoint("RIGHT", self, "RIGHT", -4, 0)
+    self.bankIcon:SetTexture("Interface\\GossipFrame\\BankerGossipIcon")
+    self.bankIcon:Hide()
+    self.bankBtn = CreateFrame("Button", nil, self)
+    self.bankBtn:SetSize(16, 16)
+    self.bankBtn:SetPoint("CENTER", self.bankIcon, "CENTER", 0, 0)
+    self.bankBtn:Hide()
+    self.bankBtn:SetScript("OnClick", function()
+        local data = self._data
+        if not data or addon.MailRunActive() then
+            return
+        end
+        local plan
+        if data.kind == "header" then
+            plan = data.rowKeys and #data.rowKeys > 0
+                and addon.WithdrawPlanForRows(data.rowKeys) or nil
+        else
+            plan = addon.WithdrawPlanForItem(data.rowKey)
+        end
+        if plan and #plan > 0 then
+            -- instant feedback: the chest disappears the frame you click
+            -- it, before the moves confirm - the run's end-of-run refresh
+            -- re-renders every row anyway, and the MailRunActive guard
+            -- makes a mid-run re-click a no-op
+            self.bankBtn:Hide()
+            self.bankIcon:Hide()
+            addon.ExecuteLoot(plan)
+        end
+    end)
+    self.bankBtn:SetScript("OnEnter", function()
+        local data = self._data
+        GameTooltip:SetOwner(self.bankBtn, "ANCHOR_TOP")
+        if data and data.kind == "header" and data.altKey then
+            -- the live plan for THIS header's rows: the same rows the
+            -- header's own count refers to, never the alt's rows under
+            -- other headers
+            local count = #addon.WithdrawPlanForRows(data.rowKeys)
+            GameTooltip:AddLine(("Withdraw %s's drafted bank items (%d)")
+                :format(addon.AltDisplayName(data.altKey), count), 1, 1, 1, true)
+        else
+            GameTooltip:AddLine("Withdraw this item from the bank",
+                1, 1, 1, true)
+        end
+        GameTooltip:Show()
+    end)
+    self.bankBtn:SetScript("OnLeave", GameTooltip_Hide)
     self.divider = self:CreateTexture(nil, "OVERLAY")
     self.divider:SetSize(1, 12)
     self.divider:SetColorTexture(1, 1, 1, 0.15)
@@ -117,11 +172,16 @@ function GearFallDistributionRowMixin:Populate(data)
         self.slotFs:Hide()
         self.divider:Hide()
         -- only headers that belong to one character grow a clickable
-        -- envelope (and only when they hold inbox attachments); section
-        -- and "Left over" headers stay icon-less
+        -- badge (and only when they hold rows from that source): a
+        -- character header's envelope loots its inbox attachments, its
+        -- chest withdraws its bank items; section and "Left over" headers
+        -- stay icon-less
         local headerMail = data.altKey ~= nil and (data.mailCount or 0) > 0
         self.mailIcon:SetShown(headerMail)
         self.mailBtn:SetShown(headerMail)
+        local headerBank = data.altKey ~= nil and (data.bankCount or 0) > 0
+        self.bankIcon:SetShown(headerBank)
+        self.bankBtn:SetShown(headerBank)
         self.Stripe:SetTexture(nil)
         -- EM geometry exactly (Triage.lua y=4 start, "y > 4" gap rule): the
         -- first heading sits 4px down with no section gap (block 4+18+12),
@@ -151,14 +211,19 @@ function GearFallDistributionRowMixin:Populate(data)
     local nameW = (self:GetWidth() or 440) * 0.52
     self.nameFs:SetWidth(nameW - 68)
     local item = data.item
-    -- rows whose item is still in the mailbox show the envelope badge
-    -- trailing the advice text (anchored below, once the text is set);
-    -- the advice column keeps its full width either way
+    -- rows whose item is still in the mailbox show the envelope badge,
+    -- rows still in a bank/Warbank tab show the chest badge (both trail
+    -- the advice text, anchored below once the text is set; the advice
+    -- column keeps its full width either way, and one item can only sit
+    -- in one place so the badges are mutually exclusive)
     local inMail = item.location == "mail"
+    local inBank = item.location == "bank"
     self.mailIcon:SetShown(inMail)
     -- the envelope is clickable for every identified draft row; a left
     -- over attachment keeps the badge visual-only (junk is never claimed)
     self.mailBtn:SetShown(inMail and data.kind ~= "leftover")
+    self.bankIcon:SetShown(inBank)
+    self.bankBtn:SetShown(inBank and data.kind ~= "leftover")
     self.actionFs:SetWidth((self:GetWidth() or 440) - nameW - 12)
 
     if data.index and data.index % 2 == 0 then
@@ -209,6 +274,16 @@ function GearFallDistributionRowMixin:Populate(data)
         end
         self.mailIcon:ClearAllPoints()
         self.mailIcon:SetPoint("LEFT", self.actionFs, "LEFT", x, 0)
+    end
+    if inBank then
+        -- the chest trails the advice text exactly like the envelope
+        local x = self.actionFs:GetStringWidth() + 4
+        local maxX = (self:GetWidth() or 440) - 16
+        if x > maxX then
+            x = maxX
+        end
+        self.bankIcon:ClearAllPoints()
+        self.bankIcon:SetPoint("LEFT", self.actionFs, "LEFT", x, 0)
     end
 end
 
@@ -359,13 +434,23 @@ function GearFallDistributionRowMixin:OnEnter()
             end
         end
     end
-    -- the envelope badge's own explanation, for every kind: mail
-    -- attachments cannot be picked up for mailing, the user must claim
-    -- them first
+    -- the badges' own explanation, for every kind: mail attachments
+    -- cannot be picked up for mailing, and bank items cannot be attached
+    -- to a letter either - both must be claimed into the bags first
     if data.item.location == "mail" then
         GameTooltip:AddLine("In your mailbox - claim it, then rescan to "
             .. "mail it. GearFall cannot attach mail attachments.",
             1, 0.82, 0, true)
+    elseif data.item.location == "bank" then
+        if data.item.bankType == "account" then
+            GameTooltip:AddLine("In your Warbank - withdraw it to mail it "
+                .. "(any realm's bank can withdraw, so alts on other "
+                .. "realms can too).", 1, 0.82, 0, true)
+        else
+            GameTooltip:AddLine("In your bank - withdraw it, then rescan "
+                .. "to mail it. GearFall cannot attach bank items.",
+                1, 0.82, 0, true)
+        end
     end
     GameTooltip:Show()
 end
@@ -398,10 +483,11 @@ function addon.ClampDistributionToScreen()
     end
 end
 
--- EM's docking order, trimmed to our one use case: sit right of the mailbox
--- at equal height, then immediately detach to absolute coords. Leaving the
--- relative anchor in place produces the sticky-resize bug (the mail frame
--- reflows mid-drag and yanks us along).
+-- EM's docking order, trimmed to our two use cases: sit right of the
+-- mailbox (or the bank frame, whichever is the host), then immediately
+-- detach to absolute coords. Leaving the relative anchor in place
+-- produces the sticky-resize bug (the host frame reflows mid-drag and
+-- yanks us along).
 function addon.AnchorDistributionOverlay()
     if not distFrame then
         return
@@ -410,12 +496,18 @@ function addon.AnchorDistributionOverlay()
         addon.ClampDistributionToScreen()
         return
     end
+    local host
     if MailFrame and MailFrame:IsShown() then
+        host = MailFrame
+    elseif BankFrame and BankFrame:IsShown() then
+        host = BankFrame
+    end
+    if host then
         local screenH = (UIParent and UIParent:GetHeight()) or 768
         local maxH = math.max(300, math.floor(screenH - 120))
-        distFrame:SetHeight(math.min(MailFrame:GetHeight(), maxH))
+        distFrame:SetHeight(math.min(host:GetHeight(), maxH))
         distFrame:ClearAllPoints()
-        distFrame:SetPoint("TOPLEFT", MailFrame, "TOPRIGHT", 2, 0)
+        distFrame:SetPoint("TOPLEFT", host, "TOPRIGHT", 2, 0)
     end
     DetachToUIParent(distFrame)
 end
@@ -496,6 +588,38 @@ function addon.UpdateDistMailBtn()
     end
 end
 
+-- the bank claim button's state, fifth member of the Update*Btn family:
+-- visible only while a bank is open (its rows only exist then), stacked
+-- above the loot/send pair - the list panel lifts its bottom edge while
+-- the button is shown so the extra row never overlaps it. Same contract
+-- as the trio - safe with no frame, called from every RefreshDistribution
+function addon.UpdateDistBankBtn()
+    local btn = distFrame and distFrame.BankLootButton
+    if not btn then
+        return
+    end
+    local bankOpen = addon._bankOpen == true
+    btn:SetShown(bankOpen)
+    local listPanel = distFrame.gfListPanel
+    if listPanel then
+        listPanel:ClearAllPoints()
+        listPanel:SetPoint("TOPLEFT", distFrame.SummaryBar, "BOTTOMLEFT", 0, -2)
+        listPanel:SetPoint("BOTTOMRIGHT", distFrame, "BOTTOMRIGHT", -12,
+            bankOpen and 78 or 52)
+    end
+    if not bankOpen then
+        return
+    end
+    local text, reason, enabled = addon.BankLootButtonState()
+    btn:SetText(text)
+    btn._disabledReason = reason
+    if enabled then
+        btn:Enable()
+    else
+        btn:Disable()
+    end
+end
+
 -- the alert icon's state, fourth member of the Update*Btn family: visible
 -- only when the current character's ledger holds promises the fresh draft
 -- cannot see anywhere. Same contract as the trio - safe with no frame,
@@ -560,6 +684,7 @@ function addon.RefreshDistribution(force)
     addon.UpdateDistMailBtn()
     addon.UpdateDistLootBtn()
     addon.UpdateDistEquipBtn()
+    addon.UpdateDistBankBtn()
     addon.UpdateDistStaleAlert()
     if not (distFrame and distFrame:IsShown()) then
         return
@@ -800,6 +925,41 @@ function addon.CreateDistributionFrame()
         lootBtn:SetScript("OnLeave", GameTooltip_Hide)
         f.MailLootButton = lootBtn
 
+        -- the staged withdraw button: bank counterpart of the staged loot
+        -- button, visible only while a bank is open and stacked above the
+        -- loot/send pair (their row is full; the list panel lifts its own
+        -- bottom edge while this is shown, see UpdateDistBankBtn)
+        local bankBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
+        bankBtn:SetSize(170, 24)
+        bankBtn:SetPoint("BOTTOMRIGHT", lootBtn, "TOPRIGHT", 0, 4)
+        bankBtn:SetText("Withdraw from Bank")
+        bankBtn._disabledReason = "Open a bank to withdraw"
+        bankBtn:Disable()
+        bankBtn:SetScript("OnClick", function()
+            local stage, plan = addon.NextBankWithdrawStage()
+            if stage then
+                addon.ExecuteLoot(plan)
+            end
+        end)
+        -- same tooltip contract as the send button: a disabled reason is
+        -- the one message that matters, so it shows while disabled
+        bankBtn:SetMotionScriptsWhileDisabled(true)
+        bankBtn:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_TOP")
+            if btn._disabledReason and not btn:IsEnabled() then
+                GameTooltip:AddLine(btn._disabledReason, 1, 1, 1, true)
+            else
+                GameTooltip:AddLine("Withdraws this stage's bank and "
+                    .. "Warbank items into your bags", 1, 1, 1, true)
+                GameTooltip:AddLine("One stage per click: upgrades, then "
+                    .. "future upgrades, then respec holds. Left over items "
+                    .. "stay put.", 0.8, 0.8, 0.8, true)
+            end
+            GameTooltip:Show()
+        end)
+        bankBtn:SetScript("OnLeave", GameTooltip_Hide)
+        f.BankLootButton = bankBtn
+
         -- the conditional equip button: opposite corner from the send/
         -- loot pair (their row is full), and hidden entirely unless the
         -- draft holds arrived upgrades for the current character with the
@@ -837,6 +997,7 @@ function addon.CreateDistributionFrame()
         -- the pieces instead of layering duplicate buttons on top
         f.gfBuilt = true
         f.gfProvider = distProvider
+        f.gfListPanel = listPanel
     else
         distProvider = f.gfProvider
     end
@@ -869,20 +1030,30 @@ local events = CreateFrame("Frame")
 events:RegisterEvent("MAIL_SHOW")
 events:RegisterEvent("MAIL_CLOSED")
 events:RegisterEvent("MAIL_INBOX_UPDATE")
+-- the bank as a third scan source: BANKFRAME_OPENED/CLOSED gate the bank
+-- scan (bank tab data only exists while the frame is open), the per-slot
+-- tab events coalesce-rescan the draft, and BANK_TABS_CHANGED covers a
+-- tab purchased mid-session
+events:RegisterEvent("BANKFRAME_OPENED")
+events:RegisterEvent("BANKFRAME_CLOSED")
+events:RegisterEvent("PLAYERBANKSLOTS_CHANGED")
+events:RegisterEvent("PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED")
+events:RegisterEvent("BANK_TABS_CHANGED")
 -- the window docks to the mailbox and drafts from the bags: bag changes
--- (a loot take's claimed item landing, vendor, equip) must coalesce-rescan
--- it exactly like the Sendable tab, or a just-claimed attachment's arrival
--- lands with no event the window hears and it goes stale until a manual
--- rescan
+-- (a loot take's claimed item landing, a withdraw's arrival, vendor,
+-- equip) must coalesce-rescan it exactly like the Sendable tab, or a
+-- just-claimed attachment's arrival lands with no event the window hears
+-- and it goes stale until a manual rescan
 events:RegisterEvent("BAG_UPDATE_DELAYED")
 -- inbox updates can burst (one per read mail); coalesce the rescans
 local inboxRescanPending
 
 -- should the Distribution window pop open right now? The draft decides:
--- mailable upgrades in the bags (the original trigger), or gear inbound in
--- the mail - GearFall-routed copies promised to this character that are
--- still sitting in the inbox ("Arrived - equip it" rows). Unplanned gear
--- mailed manually never triggers the pop; the mail is the user's to open.
+-- mailable upgrades in the bags or the bank (the original trigger), or
+-- gear inbound in the mail - GearFall-routed copies promised to this
+-- character that are still sitting in the inbox ("Arrived - equip it"
+-- rows). Unplanned gear mailed manually never triggers the pop; the mail
+-- is the user's to open.
 local function AutoOpenWanted()
     for _, s in ipairs(addon._distSuggestions or {}) do
         if s.kind == "upgrade"
@@ -894,15 +1065,15 @@ local function AutoOpenWanted()
     return false
 end
 
--- attempt the auto-open, guarded: only while a mailbox is open, never
--- mid-pipeline (a run's own refresh speaks last), never after the user
--- dismissed the window during this mailbox session. Called at MAIL_SHOW
--- and after every draft rebuild the mailbox events schedule - the inbox
--- payload often lands after the frame opens, so the rescan chain is what
--- makes the trigger reliable
+-- attempt the auto-open, guarded: only while a mailbox or a bank is open,
+-- never mid-pipeline (a run's own refresh speaks last), never after the
+-- user dismissed the window during this session. Called at MAIL_SHOW,
+-- BANKFRAME_OPENED, and after every draft rebuild the mailbox/bank events
+-- schedule - the inbox payload often lands after the frame opens, so the
+-- rescan chain is what makes the trigger reliable
 function addon.AttemptDistributionAutoOpen()
-    if not addon._mailboxOpen or addon.MailRunActive()
-        or addon._distDismissed then
+    if not (addon._mailboxOpen or addon._bankOpen)
+        or addon.MailRunActive() or addon._distDismissed then
         return
     end
     if not AutoOpenWanted() then
@@ -963,12 +1134,13 @@ events:SetScript("OnEvent", function(_, event)
         end)
     elseif event == "BAG_UPDATE_DELAYED" then
         -- same contract as the Sendable tab: bag changes while the
-        -- mailbox is open coalesce-rescan the window (its own stand-down
-        -- covers the per-take bursts; the run's final refresh speaks
-        -- last for those). Deliberately NO auto-open attempt here: bag
-        -- changes are not mail, and a claimed attachment only ever
+        -- mailbox or bank is open coalesce-rescan the window (its own
+        -- stand-down covers the per-take bursts; the run's final refresh
+        -- speaks last for those). Deliberately NO auto-open attempt here:
+        -- bag changes are not mail, and a claimed attachment only ever
         -- REDUCES what is inbound
-        if not addon._mailboxOpen or addon.MailRunActive() then
+        if not (addon._mailboxOpen or addon._bankOpen)
+            or addon.MailRunActive() then
             return
         end
         if inboxRescanPending then
@@ -977,15 +1149,59 @@ events:SetScript("OnEvent", function(_, event)
         inboxRescanPending = true
         C_Timer.After(0.5, function()
             inboxRescanPending = nil
-            if addon._mailboxOpen then
+            if addon._mailboxOpen or addon._bankOpen then
                 addon.RefreshDistribution(true)
             end
         end)
-    else
+    elseif event == "BANKFRAME_OPENED" then
+        addon._bankOpen = true
+        addon._distDismissed = nil
+        addon.RefreshDistribution(true)
+        -- the tab contents often arrive after the frame opens (mirroring
+        -- the mailbox's late inbox payload): schedule a guaranteed rescan
+        -- chain that runs while the bank stays open
+        for _, delay in ipairs({ 0.5, 1.5, 3 }) do
+            C_Timer.After(delay, function()
+                -- a run does its own single end-of-run refresh
+                if addon._bankOpen and not addon.MailRunActive() then
+                    addon.RefreshDistribution(true)
+                    -- the late payload may have just made something draftable
+                    addon.AttemptDistributionAutoOpen()
+                end
+            end)
+        end
+        addon.AttemptDistributionAutoOpen()
+    elseif event == "PLAYERBANKSLOTS_CHANGED"
+        or event == "PLAYER_ACCOUNT_BANK_TAB_SLOTS_CHANGED"
+        or event == "BANK_TABS_CHANGED" then
+        -- only while the bank is open; the flag gates the bank scan
+        if not addon._bankOpen then
+            return
+        end
+        -- slot events can burst (one per moved item): coalesce the rescans
+        if inboxRescanPending then
+            return
+        end
+        inboxRescanPending = true
+        C_Timer.After(0.5, function()
+            inboxRescanPending = nil
+            if addon._bankOpen then
+                addon.RefreshDistribution(true)
+            end
+        end)
+    elseif event == "MAIL_CLOSED" then
         addon._mailboxOpen = false
         addon._distDismissed = nil
         addon.UpdateDistMailBtn()
         addon.UpdateDistLootBtn()
         addon.UpdateDistEquipBtn()
+    else
+        -- BANKFRAME_CLOSED
+        addon._bankOpen = false
+        addon._distDismissed = nil
+        addon.UpdateDistMailBtn()
+        addon.UpdateDistLootBtn()
+        addon.UpdateDistEquipBtn()
+        addon.UpdateDistBankBtn()
     end
 end)
