@@ -743,6 +743,9 @@ end
 -- SpecUsesItem and answers four ways:
 --   "yes"        - wear it now (slotID/slotFixed/candidateSlots as below)
 --   "eventually" - only the alt's level or current weapon load-out blocks it
+--                  (slotID/candidateSlots still travel with the verdict so
+--                  the scorer can run its statless quality gate against the
+--                  slot snapshots before trusting the "save it" advice)
 --   "respec"     - the current spec would not use it, but another spec of
 --                  the class would
 --   "no"         - this alt could never wear it
@@ -762,7 +765,7 @@ function addon.IsItemEligibleForAlt(itemInfo, alt)
     if itemInfo.minLevel and alt.level and itemInfo.minLevel > 0
         and itemInfo.minLevel > alt.level then
         return "eventually", ("Requires level %d (character is %d)"):format(
-            itemInfo.minLevel, alt.level)
+            itemInfo.minLevel, alt.level), slotID, nil, dualSlots
     end
 
     local invType = itemInfo.invType
@@ -812,25 +815,28 @@ function addon.IsItemEligibleForAlt(itemInfo, alt)
         if IsTwoHanded(invType, itemInfo.subclass) then
             -- allowed when the offhand is empty or holds a weapon (dual-wield swap)
             if offhand and offhand.invType and not IsEquippedWeaponish(offhand) then
-                return "eventually", "Offhand holds a shield; Item is a two-hander"
+                return "eventually", "Offhand holds a shield; Item is a two-hander",
+                    slotID
             end
         elseif slotID == 16 then
             -- one-handed mainhand melee and wands
             if mainhand and mainhand.invType
                 and IsTwoHanded(mainhand.invType, mainhand.subclass) then
-                return "eventually", "Character is currently set up with a two-handed weapon"
+                return "eventually", "Character is currently set up with a two-handed weapon",
+                    slotID
             end
         elseif slotID == 17 then
             if mainhand and mainhand.invType
                 and IsTwoHanded(mainhand.invType, mainhand.subclass) then
-                return "eventually", "Character is currently set up with a two-handed weapon"
+                return "eventually", "Character is currently set up with a two-handed weapon",
+                    slotID
             end
             if offhand and offhand.invType then
                 local candidateCat = OffhandCategory(invType)
                 local currentCat = OffhandCategory(offhand.invType)
                 if candidateCat ~= currentCat then
                     return "eventually", ("Offhand currently holds a %s; Item is a %s")
-                        :format(currentCat, candidateCat)
+                        :format(currentCat, candidateCat), slotID
                 end
             end
         end

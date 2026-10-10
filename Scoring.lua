@@ -128,19 +128,13 @@ end
 -------------------------------------------------------------------------------
 
 -- The comparison target for a slot is the BETTER of what the alt wears and
--- what we mailed but they have not equipped yet. A mailed upgrade lives in
--- their mailbox (or their bags) but is invisible to every API we have from
--- here; without this ledger we would happily mail a second, weaker upgrade
--- into the same slot. Note there is no {worn, incoming} list iterated with
--- ipairs here: a nil first element truncates that table, which would make
--- incoming-on-an-empty-slot invisible. One exception keeps the ledger from
--- biting its own owner: when the candidate IS the awaited copy and we are
--- standing on its recipient, the incoming snapshot drops out of the
--- comparison - the ledger would otherwise read the item's own arrival as
--- "no upgrade" and evict the promised gear to the next alt (see
--- IsArrivedIncomingItem). Returns candValue, eqValue, eqSnap,
--- nil, blocked on success (blocked = statless quality gate, see
--- StatlessBlocked) or nil, nil, nil, err on failure.
+-- what we mailed but they have not equipped yet (the snapshots come from
+-- CollectSlotSnaps). A mailed upgrade lives in their mailbox (or their
+-- bags) but is invisible to every API we have from here; without this
+-- ledger we would happily mail a second, weaker upgrade into the same
+-- slot. Returns candValue, eqValue, eqSnap, nil, blocked on success
+-- (blocked = statless quality gate, see StatlessBlocked) or
+-- nil, nil, nil, err on failure.
 -- Statless quality gate (Enum.ItemQuality: Poor=0, Common=1, Uncommon=2).
 -- Poor/Common items carry no stats, so they can never beat an Uncommon+
 -- item in game no matter what raw item level claims - the ITEMLEVEL
@@ -181,12 +175,17 @@ function addon.IsArrivedIncomingItem(itemInfo, inc)
         and itemInfo.itemLevel == inc.itemLevel
 end
 
-local function evalSlot(provider, itemInfo, alt, slot, isMyAlt)
-    local candValue, err = provider.GetScore(itemInfo, alt, slot)
-    if candValue == nil then
-        return nil, nil, nil, err
-    end
-    local eqValue, eqSnap = 0, nil
+-- The snapshots a slot's comparison must respect: what the alt wears plus
+-- what we mailed but they have not equipped yet. The send-ledger nuance
+-- lives here and nowhere else: the candidate IS the awaited copy and its
+-- owner is the character we are playing -> score against the worn gear
+-- only. Draft-sim projections (draftIncoming) and duplicates sitting on
+-- the SENDER's side never unblock - only the real send-time ledger entry
+-- (mailIncoming) may recognize its own arrival. Note there is no
+-- {worn, incoming} list iterated with ipairs here: a nil first element
+-- truncates that table, which would make incoming-on-an-empty-slot
+-- invisible.
+local function CollectSlotSnaps(alt, slot, itemInfo, isMyAlt)
     local snaps = {}
     local worn = (alt.slots or {})[slot]
     if worn then
@@ -196,16 +195,49 @@ local function evalSlot(provider, itemInfo, alt, slot, isMyAlt)
     if incoming and isMyAlt and incoming.mailIncoming
         and not incoming.draftIncoming
         and addon.IsArrivedIncomingItem(itemInfo, incoming) then
-        -- the candidate IS the awaited copy and its owner is the character
-        -- we are playing: score against the worn gear only. Draft-sim
-        -- projections (draftIncoming) and duplicates sitting on the
-        -- SENDER's side never unblock - only the real send-time ledger
-        -- entry (mailIncoming) may recognize its own arrival.
         incoming = nil
     end
     if incoming then
         snaps[#snaps + 1] = incoming
     end
+    return snaps
+end
+
+-- Does the statless quality gate block this candidate in EVERY slot it
+-- could land in? Drives ScoreItemForAlt's fall-through: a Poor/Common
+-- item is PERMANENTLY not an upgrade over Uncommon+ gear, while the
+-- level/load-out gates behind "eventually" are only temporary - so when
+-- the quality blocker already settles the question, the hold advice must
+-- not promise "save it for later". One unblocked slot (an empty finger,
+-- say) keeps the hold alive: at the required level the statless item is
+-- still a legal fill there and can win that slot outright. Legacy
+-- snapshots without a quality fail open (StatlessBlocked), like every
+-- other gate; an unresolvable target slot also fails open.
+local function StatlessBlockedEverywhere(itemInfo, alt, slotID, slotFixed,
+    candidateSlots, isMyAlt)
+    if not itemInfo.quality or itemInfo.quality > Enum.ItemQuality.Common then
+        return false
+    end
+    local targetSlots = (candidateSlots and not slotFixed)
+        and candidateSlots or { slotID }
+    local any = false
+    for _, slot in ipairs(targetSlots) do
+        any = true
+        if not StatlessBlocked(itemInfo.quality,
+            CollectSlotSnaps(alt, slot, itemInfo, isMyAlt)) then
+            return false
+        end
+    end
+    return any
+end
+
+local function evalSlot(provider, itemInfo, alt, slot, isMyAlt)
+    local candValue, err = provider.GetScore(itemInfo, alt, slot)
+    if candValue == nil then
+        return nil, nil, nil, err
+    end
+    local eqValue, eqSnap = 0, nil
+    local snaps = CollectSlotSnaps(alt, slot, itemInfo, isMyAlt)
     for _, s in ipairs(snaps) do
         local v, e = provider.GetScore(s, alt, slot)
         if v == nil then
@@ -225,13 +257,24 @@ end
 function addon.ScoreItemForAlt(itemInfo, alt)
     local result = { eligible = false, mode = alt.scoringMode or "ITEMLEVEL" }
 
+    local myKey = addon.PlayerKey and addon.PlayerKey()
+    local isMyAlt = myKey ~= nil and alt == GearFallDB.alts[myKey]
+
     local verdict, reason, slotID, slotFixed, candidateSlots, respecSpecs =
         addon.IsItemEligibleForAlt(itemInfo, alt)
     if verdict ~= "yes" then
-        result.reason = reason
-        result.verdict = verdict
-        result.respecSpecs = respecSpecs
-        return result
+        -- a permanently-blocked statless candidate must not borrow the
+        -- temporary "eventually" hold: fall through and score (delta
+        -- clamps to 0, modeNote says why) so the advice reads "not an
+        -- upgrade", never "save it for later"
+        if verdict ~= "eventually"
+            or not StatlessBlockedEverywhere(itemInfo, alt, slotID,
+                slotFixed, candidateSlots, isMyAlt) then
+            result.reason = reason
+            result.verdict = verdict
+            result.respecSpecs = respecSpecs
+            return result
+        end
     end
     result.eligible = true
     result.slotID = slotID
@@ -255,8 +298,6 @@ function addon.ScoreItemForAlt(itemInfo, alt)
     -- raw item level (under Pawn a lower-ilvl ring with better stats can
     -- outscore a higher-ilvl one), and Pawn scores the same weapon
     -- differently per hand, so dual-wield offers need true per-slot math.
-    local myKey = addon.PlayerKey and addon.PlayerKey()
-    local isMyAlt = myKey ~= nil and alt == GearFallDB.alts[myKey]
     local targetSlots = (candidateSlots and not slotFixed)
         and candidateSlots or { slotID }
     local evals, evalErr
