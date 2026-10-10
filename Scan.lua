@@ -278,12 +278,20 @@ function addon.IsIgnored(info)
     return nil
 end
 
--- Everything that could be distributed right now: bag items always, plus
--- the inbox while a mailbox is open and the bank/Warbank tabs while the
--- bank frame is open (each is the Distribution window's own gate).
--- Ignored items are dropped at this single choke point - nothing
--- downstream ever sees them. The second return reports how many were
--- dropped per tier for /gear scan diagnostics.
+-- Everything that could be distributed right now. Bags always scan live;
+-- the mailbox and the bank scan live while their frame is open and
+-- otherwise feed that source's session snapshot - the "remember what you
+-- saw" half of the plan (FR-3): while a frame is open, every fresh scan
+-- replaces its snapshot; when it closes, the stored rows keep feeding the
+-- draft, stamped sourceClosed (remembered, still drafted, never claimable
+-- - the lootable predicates and the UI badges read the stamp). Snapshots
+-- are plain stored tables: zero API reads while a source is closed, so
+-- the no-background-scanning rule holds, and they die with the session on
+-- /reload. Warbank snapshot staleness (another character can empty it
+-- while you are away) is explicitly accepted and never surfaced - a
+-- product decision. Ignored items are dropped at this single choke point
+-- - nothing downstream ever sees them. The second return reports how many
+-- were dropped per tier for /gear scan diagnostics.
 function addon.ScanEligibleItems()
     local results = {}
     local ignored = { default = 0, permanent = 0, instance = 0 }
@@ -299,12 +307,20 @@ function addon.ScanEligibleItems()
         consider(info)
     end
     if addon._mailboxOpen then
-        for _, info in ipairs(addon.ScanMailForEligibleItems()) do
+        addon._mailScanSnapshot = addon.ScanMailForEligibleItems()
+    end
+    if addon._mailScanSnapshot then
+        for _, info in ipairs(addon._mailScanSnapshot) do
+            info.sourceClosed = not addon._mailboxOpen or nil
             consider(info)
         end
     end
     if addon._bankOpen then
-        for _, info in ipairs(addon.ScanBankForEligibleItems()) do
+        addon._bankScanSnapshot = addon.ScanBankForEligibleItems()
+    end
+    if addon._bankScanSnapshot then
+        for _, info in ipairs(addon._bankScanSnapshot) do
+            info.sourceClosed = not addon._bankOpen or nil
             consider(info)
         end
     end

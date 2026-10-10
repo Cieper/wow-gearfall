@@ -10,6 +10,34 @@ local _, addon = ...
 local distFrame
 local distProvider
 
+-- One source badge's full render state, shared by the envelope and the
+-- chest (rows and headers alike): shown whenever the row belongs to the
+-- source, GREYED OUT while the source is closed - "from your last visit,
+-- you can't do this right now" - and clickable only for live rows. Rows
+-- are recycled by the scrollbox, so every Populate resets every knob.
+-- Leftover rows keep the badge visual-only (junk is never claimed) but
+-- follow the same grey rule, so the color always means the same thing.
+local function RenderSourceBadge(icon, btn, hasRows, claimable, closed)
+    icon:SetShown(hasRows)
+    btn:SetShown(hasRows and claimable)
+    if not hasRows then
+        return
+    end
+    icon:SetDesaturated(closed == true)
+    -- SetDesaturated silently no-ops on ATLAS textures (the envelope is
+    -- one; the chest's file texture greys through it), so the grey look
+    -- is multiplied in with a vertex color, which works for both
+    icon:SetVertexColor(closed and 0.45 or 1, closed and 0.45 or 1,
+        closed and 0.45 or 1)
+    icon:SetAlpha(closed and 0.4 or 1)
+    if closed then
+        btn:Disable()
+        btn:SetMotionScriptsWhileDisabled(true)
+    else
+        btn:Enable()
+    end
+end
+
 GearFallDistributionRowMixin = {}
 
 function GearFallDistributionRowMixin:OnLoad()
@@ -23,7 +51,11 @@ function GearFallDistributionRowMixin:OnLoad()
     self.nameFs:SetNonSpaceWrap(false)
     self.nameFs:SetMaxLines(1)
     self.actionFs = self:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    self.actionFs:SetPoint("RIGHT", self, "RIGHT", -4, 0)
+    -- the advice column ends short of the fixed badge column (two 12px
+    -- slots at the row's right edge), so long advice can never run under
+    -- a badge; text is left-aligned in its box, so short advice is
+    -- unaffected
+    self.actionFs:SetPoint("RIGHT", self, "RIGHT", -38, 0)
     self.actionFs:SetJustifyH("LEFT")
     self.actionFs:SetWordWrap(false)
     self.actionFs:SetNonSpaceWrap(false)
@@ -35,9 +67,10 @@ function GearFallDistributionRowMixin:OnLoad()
     self.slotFs:SetTextColor(0.65, 0.65, 0.65)
     self.slotFs:SetWordWrap(false)
     self.slotFs:SetMaxLines(1)
-    -- mail badge: end-of-line marker for rows whose item is still an inbox
-    -- attachment (the minimap's own envelope atlas); they cannot be attached
-    -- to outgoing mail, so the user must claim them first
+    -- mail badge: fixed outer right-edge slot for rows whose item is
+    -- still an inbox attachment (the minimap's own envelope atlas); they
+    -- cannot be attached to outgoing mail, so the user must claim them
+    -- first. Every envelope sits HERE, on rows and headers alike
     self.mailIcon = self:CreateTexture(nil, "OVERLAY")
     self.mailIcon:SetSize(12, 12)
     self.mailIcon:SetPoint("RIGHT", self, "RIGHT", -4, 0)
@@ -80,10 +113,23 @@ function GearFallDistributionRowMixin:OnLoad()
         if data and data.kind == "header" and data.altKey then
             -- the live plan for THIS header's rows: the same rows the
             -- header's own count refers to, never the alt's rows under
-            -- other headers
-            local count = #addon.LootPlanForRows(data.rowKeys)
-            GameTooltip:AddLine(("Loot %s's drafted attachments (%d)")
-                :format(addon.AltDisplayName(data.altKey), count), 1, 1, 1, true)
+            -- other headers; a header holding only remembered rows says
+            -- so instead of a zero-count loot offer
+            local live = #addon.LootPlanForRows(data.rowKeys)
+            local total = data.mailTotal or data.mailCount or 0
+            if live == 0 and total > 0 then
+                GameTooltip:AddLine(("From your last visit: %s still has "
+                    .. "%d attachment(s) in the mail - open the mailbox to "
+                    .. "loot them"):format(
+                    addon.AltDisplayName(data.altKey), total), 1, 1, 1, true)
+            else
+                GameTooltip:AddLine(("Loot %s's drafted attachments (%d)")
+                    :format(addon.AltDisplayName(data.altKey), live),
+                    1, 1, 1, true)
+            end
+        elseif data and data.item and data.item.sourceClosed then
+            GameTooltip:AddLine("From your last visit - open the mailbox "
+                .. "to loot this attachment", 1, 1, 1, true)
         else
             GameTooltip:AddLine("Loot this attachment from the mail",
                 1, 1, 1, true)
@@ -95,12 +141,14 @@ function GearFallDistributionRowMixin:OnLoad()
     -- sits in a bank/Warbank tab - a chest (the banker gossip icon) that
     -- is also a withdraw button: an item row's chest withdraws exactly
     -- that item, a character header's chest withdraws every drafted bank
-    -- item for that character. The plan comes from the addon namespace and
-    -- ExecuteLoot dispatches by source, so mid-run clicks are no-ops via
-    -- the executor's own mutual-exclusion guard
+    -- item for that character. Fixed INNER right-edge slot, clear of the
+    -- envelope's, so a mixed header shows both side by side. The plan
+    -- comes from the addon namespace and ExecuteLoot dispatches by
+    -- source, so mid-run clicks are no-ops via the executor's own
+    -- mutual-exclusion guard
     self.bankIcon = self:CreateTexture(nil, "OVERLAY")
     self.bankIcon:SetSize(12, 12)
-    self.bankIcon:SetPoint("RIGHT", self, "RIGHT", -4, 0)
+    self.bankIcon:SetPoint("RIGHT", self, "RIGHT", -22, 0)
     self.bankIcon:SetTexture("Interface\\GossipFrame\\BankerGossipIcon")
     self.bankIcon:Hide()
     self.bankBtn = CreateFrame("Button", nil, self)
@@ -135,10 +183,23 @@ function GearFallDistributionRowMixin:OnLoad()
         if data and data.kind == "header" and data.altKey then
             -- the live plan for THIS header's rows: the same rows the
             -- header's own count refers to, never the alt's rows under
-            -- other headers
-            local count = #addon.WithdrawPlanForRows(data.rowKeys)
-            GameTooltip:AddLine(("Withdraw %s's drafted bank items (%d)")
-                :format(addon.AltDisplayName(data.altKey), count), 1, 1, 1, true)
+            -- other headers; a header holding only remembered rows says
+            -- so instead of a zero-count withdraw offer
+            local live = #addon.WithdrawPlanForRows(data.rowKeys)
+            local total = data.bankTotal or data.bankCount or 0
+            if live == 0 and total > 0 then
+                GameTooltip:AddLine(("From your last visit: %s still has "
+                    .. "%d item(s) in the bank - open a bank to withdraw "
+                    .. "them"):format(
+                    addon.AltDisplayName(data.altKey), total), 1, 1, 1, true)
+            else
+                GameTooltip:AddLine(("Withdraw %s's drafted bank items (%d)")
+                    :format(addon.AltDisplayName(data.altKey), live),
+                    1, 1, 1, true)
+            end
+        elseif data and data.item and data.item.sourceClosed then
+            GameTooltip:AddLine("From your last visit - open a bank to "
+                .. "withdraw this item", 1, 1, 1, true)
         else
             GameTooltip:AddLine("Withdraw this item from the bank",
                 1, 1, 1, true)
@@ -172,16 +233,17 @@ function GearFallDistributionRowMixin:Populate(data)
         self.slotFs:Hide()
         self.divider:Hide()
         -- only headers that belong to one character grow a clickable
-        -- badge (and only when they hold rows from that source): a
-        -- character header's envelope loots its inbox attachments, its
-        -- chest withdraws its bank items; section and "Left over" headers
-        -- stay icon-less
-        local headerMail = data.altKey ~= nil and (data.mailCount or 0) > 0
-        self.mailIcon:SetShown(headerMail)
-        self.mailBtn:SetShown(headerMail)
-        local headerBank = data.altKey ~= nil and (data.bankCount or 0) > 0
-        self.bankIcon:SetShown(headerBank)
-        self.bankBtn:SetShown(headerBank)
+        -- badge (and only when they hold rows from that source, live or
+        -- remembered): a character header's envelope loots its inbox
+        -- attachments, its chest withdraws its bank items; a header whose
+        -- rows are all remembered greys the badge instead of hiding it.
+        -- Section and "Left over" headers stay icon-less
+        local headerMail = data.altKey ~= nil and (data.mailTotal or 0) > 0
+        RenderSourceBadge(self.mailIcon, self.mailBtn, headerMail,
+            headerMail, (data.mailCount or 0) == 0)
+        local headerBank = data.altKey ~= nil and (data.bankTotal or 0) > 0
+        RenderSourceBadge(self.bankIcon, self.bankBtn, headerBank,
+            headerBank, (data.bankCount or 0) == 0)
         self.Stripe:SetTexture(nil)
         -- EM geometry exactly (Triage.lua y=4 start, "y > 4" gap rule): the
         -- first heading sits 4px down with no section gap (block 4+18+12),
@@ -212,19 +274,18 @@ function GearFallDistributionRowMixin:Populate(data)
     self.nameFs:SetWidth(nameW - 68)
     local item = data.item
     -- rows whose item is still in the mailbox show the envelope badge,
-    -- rows still in a bank/Warbank tab show the chest badge (both trail
-    -- the advice text, anchored below once the text is set; the advice
-    -- column keeps its full width either way, and one item can only sit
-    -- in one place so the badges are mutually exclusive)
+    -- rows still in a bank/Warbank tab the chest badge (both trail the
+    -- advice text, anchored below once the text is set; the advice column
+    -- keeps its full width either way, and one item can only sit in one
+    -- place so the badges are mutually exclusive). Remembered rows from a
+    -- closed source keep their badge - greyed out, see RenderSourceBadge
     local inMail = item.location == "mail"
     local inBank = item.location == "bank"
-    self.mailIcon:SetShown(inMail)
-    -- the envelope is clickable for every identified draft row; a left
-    -- over attachment keeps the badge visual-only (junk is never claimed)
-    self.mailBtn:SetShown(inMail and data.kind ~= "leftover")
-    self.bankIcon:SetShown(inBank)
-    self.bankBtn:SetShown(inBank and data.kind ~= "leftover")
-    self.actionFs:SetWidth((self:GetWidth() or 440) - nameW - 12)
+    RenderSourceBadge(self.mailIcon, self.mailBtn, inMail,
+        inMail and data.kind ~= "leftover", inMail and item.sourceClosed)
+    RenderSourceBadge(self.bankIcon, self.bankBtn, inBank,
+        inBank and data.kind ~= "leftover", inBank and item.sourceClosed)
+    self.actionFs:SetWidth((self:GetWidth() or 440) - nameW - 46)
 
     if data.index and data.index % 2 == 0 then
         self.Stripe:SetAtlas("auctionhouse-rowstripe-1")
@@ -264,27 +325,10 @@ function GearFallDistributionRowMixin:Populate(data)
         local c = addon.KIND_COLOR[data.hold.kind] or addon.KIND_COLOR.eventually
         self.actionFs:SetTextColor(c[1], c[2], c[3])
     end
-    if inMail then
-        -- trail the badge right after the advice text's last character,
-        -- clamped so it can never leave the row
-        local x = self.actionFs:GetStringWidth() + 4
-        local maxX = (self:GetWidth() or 440) - 16
-        if x > maxX then
-            x = maxX
-        end
-        self.mailIcon:ClearAllPoints()
-        self.mailIcon:SetPoint("LEFT", self.actionFs, "LEFT", x, 0)
-    end
-    if inBank then
-        -- the chest trails the advice text exactly like the envelope
-        local x = self.actionFs:GetStringWidth() + 4
-        local maxX = (self:GetWidth() or 440) - 16
-        if x > maxX then
-            x = maxX
-        end
-        self.bankIcon:ClearAllPoints()
-        self.bankIcon:SetPoint("LEFT", self.actionFs, "LEFT", x, 0)
-    end
+    -- the badges sit in their fixed right-edge columns (set once in
+    -- OnLoad), never re-anchored per row: the envelope always in the
+    -- outer slot, the chest always beside it, the same on every row and
+    -- header no matter how long the advice text runs
 end
 
 -- FR-9 context menu, data-only so the harness can pin the option set per
@@ -436,13 +480,29 @@ function GearFallDistributionRowMixin:OnEnter()
     end
     -- the badges' own explanation, for every kind: mail attachments
     -- cannot be picked up for mailing, and bank items cannot be attached
-    -- to a letter either - both must be claimed into the bags first
+    -- to a letter either - both must be claimed into the bags first.
+    -- Remembered rows (source closed) say where they were last seen and
+    -- what reopens the action
     if data.item.location == "mail" then
-        GameTooltip:AddLine("In your mailbox - claim it, then rescan to "
-            .. "mail it. GearFall cannot attach mail attachments.",
-            1, 0.82, 0, true)
+        if data.item.sourceClosed then
+            GameTooltip:AddLine("In your mailbox (from your last visit) - "
+                .. "open the mailbox to claim it.",
+                1, 0.82, 0, true)
+        else
+            GameTooltip:AddLine("In your mailbox - claim it, then rescan to "
+                .. "mail it. GearFall cannot attach mail attachments.",
+                1, 0.82, 0, true)
+        end
     elseif data.item.location == "bank" then
-        if data.item.bankType == "account" then
+        if data.item.sourceClosed then
+            if data.item.bankType == "account" then
+                GameTooltip:AddLine("In your Warbank (from your last "
+                    .. "visit) - open a bank to withdraw it.", 1, 0.82, 0, true)
+            else
+                GameTooltip:AddLine("In your bank (from your last visit) - "
+                    .. "open a bank to withdraw it.", 1, 0.82, 0, true)
+            end
+        elseif data.item.bankType == "account" then
             GameTooltip:AddLine("In your Warbank - withdraw it to mail it "
                 .. "(any realm's bank can withdraw, so alts on other "
                 .. "realms can too).", 1, 0.82, 0, true)
@@ -1052,11 +1112,15 @@ local inboxRescanPending
 -- mailable upgrades in the bags or the bank (the original trigger), or
 -- gear inbound in the mail - GearFall-routed copies promised to this
 -- character that are still sitting in the inbox ("Arrived - equip it"
--- rows). Unplanned gear mailed manually never triggers the pop; the mail
--- is the user's to open.
+-- rows). Remembered rows from a closed source never pop the window -
+-- nothing actionable about them until their source reopens. Unplanned
+-- gear mailed manually never triggers the pop; the mail is the user's to
+-- open.
 local function AutoOpenWanted()
     for _, s in ipairs(addon._distSuggestions or {}) do
-        if s.kind == "upgrade"
+        if s.item and s.item.sourceClosed then
+            -- skip: remembered, not actionable
+        elseif s.kind == "upgrade"
             or (s.kind == "selfkeep" and s.arrived
                 and s.item and s.item.location == "mail") then
             return true
@@ -1133,14 +1197,19 @@ events:SetScript("OnEvent", function(_, event)
             end
         end)
     elseif event == "BAG_UPDATE_DELAYED" then
-        -- same contract as the Sendable tab: bag changes while the
-        -- mailbox or bank is open coalesce-rescan the window (its own
+        -- same contract as the Sendable tab: bag changes coalesce-rescan
+        -- the window while a source frame is open - or while the window
+        -- itself is on screen (remembered rows keep it relevant with
+        -- every frame closed, and its bag rows must not freeze). Its own
         -- stand-down covers the per-take bursts; the run's final refresh
-        -- speaks last for those). Deliberately NO auto-open attempt here:
+        -- speaks last for those. Deliberately NO auto-open attempt here:
         -- bag changes are not mail, and a claimed attachment only ever
         -- REDUCES what is inbound
+        if addon.MailRunActive() then
+            return
+        end
         if not (addon._mailboxOpen or addon._bankOpen)
-            or addon.MailRunActive() then
+            and not (distFrame and distFrame:IsShown()) then
             return
         end
         if inboxRescanPending then
@@ -1149,7 +1218,8 @@ events:SetScript("OnEvent", function(_, event)
         inboxRescanPending = true
         C_Timer.After(0.5, function()
             inboxRescanPending = nil
-            if addon._mailboxOpen or addon._bankOpen then
+            if addon._mailboxOpen or addon._bankOpen
+                or (distFrame and distFrame:IsShown()) then
                 addon.RefreshDistribution(true)
             end
         end)
@@ -1192,6 +1262,10 @@ events:SetScript("OnEvent", function(_, event)
     elseif event == "MAIL_CLOSED" then
         addon._mailboxOpen = false
         addon._distDismissed = nil
+        -- deterministic close: the inbox rows convert to remembered
+        -- (greyed, unclaimable) instead of either vanishing or lingering
+        -- stale until some unrelated event
+        addon.RefreshDistribution(true)
         addon.UpdateDistMailBtn()
         addon.UpdateDistLootBtn()
         addon.UpdateDistEquipBtn()
@@ -1199,6 +1273,9 @@ events:SetScript("OnEvent", function(_, event)
         -- BANKFRAME_CLOSED
         addon._bankOpen = false
         addon._distDismissed = nil
+        -- deterministic close, mirrored from MAIL_CLOSED: bank rows
+        -- convert to remembered (greyed, unwithdrawable)
+        addon.RefreshDistribution(true)
         addon.UpdateDistMailBtn()
         addon.UpdateDistLootBtn()
         addon.UpdateDistEquipBtn()

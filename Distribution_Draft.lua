@@ -351,26 +351,36 @@ function addon.BuildDistributionSuggestions()
     -- altKey = the character this header's rows belong to (recipient
     -- groups, "Keep for yourself", per-alt hold segments); section and
     -- "Left over" headers stay alt-less and never grow a mail icon.
-    -- mailCount = how many of those rows are still inbox attachments -
-    -- the envelope icon's count and its "anything to loot?" gate.
-    -- bankCount = how many still sit in a bank/Warbank tab - the chest
-    -- icon's count and its "anything to withdraw?" gate.
+    -- mailCount/bankCount = how many of those rows are CLAIMABLE right
+    -- now (still inbox attachments / still bank items, source open) -
+    -- the badges' click-path counts. mailTotal/bankTotal = how many rows
+    -- of that source the header holds at all, including remembered
+    -- last-visit rows - the badges' visibility counts (a header with only
+    -- remembered rows greys its badge instead of hiding it).
     local function addHeader(title, r, g, b, label, items, altKey)
-        local rowKeys, mailCount, bankCount = {}, 0, 0
+        local rowKeys = {}
+        local mailCount, bankCount, mailTotal, bankTotal = 0, 0, 0, 0
         for _, it in ipairs(items or {}) do
             if it.rowKey then
                 rowKeys[#rowKeys + 1] = it.rowKey
             end
             if it.item and it.item.location == "mail" then
-                mailCount = mailCount + 1
+                mailTotal = mailTotal + 1
+                if not it.item.sourceClosed then
+                    mailCount = mailCount + 1
+                end
             elseif it.item and it.item.location == "bank" then
-                bankCount = bankCount + 1
+                bankTotal = bankTotal + 1
+                if not it.item.sourceClosed then
+                    bankCount = bankCount + 1
+                end
             end
         end
         suggestions[#suggestions + 1] = {
             kind = "header", title = title, r = r, g = g, b = b,
             label = label, rowKeys = rowKeys, mailCount = mailCount,
-            bankCount = bankCount, altKey = altKey,
+            bankCount = bankCount, mailTotal = mailTotal,
+            bankTotal = bankTotal, altKey = altKey,
         }
     end
 

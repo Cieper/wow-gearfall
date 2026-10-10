@@ -41,17 +41,24 @@ local LOOT_STAGES = {
 -- need renaming when another lootable location arrives, it just grows a
 -- policy helper and a branch inside ExecuteLoot.
 -- the one inbox source policy: a row is takeable from the mailbox iff it
--- is still an attachment there (bag rows and unattached items never are)
+-- is still an attachment there and the mailbox is its OPEN source
+-- (remembered last-visit rows are drafted for advice but can never be
+-- claimed - TakeInboxItem needs the mailbox, and a stale coordinate must
+-- never reach the executor)
 local function InboxLootable(s)
     return s.item and s.item.location == "mail"
         and s.item.mailIndex ~= nil
+        and not s.item.sourceClosed
 end
 
 -- the one bank source policy: a row is withdrawable from the bank iff it
--- still sits in a bank/Warbank tab (bag and mail rows never are)
+-- still sits in a bank/Warbank tab and the bank is its OPEN source (the
+-- remembered-row rule mirrors the inbox policy above; bank tab data only
+-- exists while the frame is open anyway)
 local function BankLootable(s)
     return s.item and s.item.location == "bank"
         and s.item.tabID ~= nil
+        and not s.item.sourceClosed
 end
 
 -- generic planner: filter draft rows through a predicate; each entry
