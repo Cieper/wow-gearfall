@@ -718,6 +718,12 @@ function addon.SpecUsesItem(itemInfo, alt)
         return true, nil, nil, slotID, dualSlots
     end
 
+    -- "never respec suggestions": a sibling-only item is a final no - no
+    -- sibling probing, no respec holds, no respecSpecs
+    if addon.SettingIsOn("neverRespecSuggestions", alt) then
+        return false, reason, "no"
+    end
+
     -- the alt's own spec refuses: would any sibling take it through the
     -- same gates?
     local names

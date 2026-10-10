@@ -37,6 +37,8 @@ end)
 addon.SETTINGS = {
     strictArmorType = { default = true, perAlt = true, label = "Strict armor type" },
     allowWeaponLoadoutSwap = { default = false, perAlt = true, label = "Allow load-out swaps" },
+    neverRespecSuggestions = { default = false, perAlt = true,
+        label = "Never make respec suggestions" },
     trinketRoleGate = { default = true, perAlt = false, label = "Trinket role gate" },
     trinketRoleHypothesis = { default = false, perAlt = false,
         label = "Infer trinket roles across classes" },

@@ -6,6 +6,15 @@ GearFall — route Warbound gear to the alt that needs it most.
 
 ### Added
 
+- **A new gearing rule: "Never make respec suggestions."** GearFall sometimes
+  holds an item back because another of that character's specs could use it,
+  and tells you a respec would unlock it ("needs a Holy respec"). If you'd
+  rather those items simply count as "not for this character", turn the rule
+  on in the Settings tab — account-wide, or just for individual characters
+  from the Rules dropdown on their Roster row. When it's on, the rejection
+  reason stays the honest one ("Item is Intellect; Protection uses
+  Strength").
+
 - **Flush a stale "incoming gear" ledger.** An upgrade you mailed to an alt
   used to haunt them forever if the letter got returned or expired: its slot
   stayed blocked and the window kept "Arrived - equip it" state for gear that
