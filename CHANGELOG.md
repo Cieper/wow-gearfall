@@ -2,6 +2,20 @@
 
 GearFall — route Warbound gear to the alt that needs it most.
 
+## Unreleased
+
+### Added
+
+- **Flush a stale "incoming gear" ledger.** An upgrade you mailed to an alt
+  used to haunt them forever if the letter got returned or expired: its slot
+  stayed blocked and the window kept "Arrived - equip it" state for gear that
+  would never arrive. Now there's a way out: `/gear flush` clears the
+  character you're playing, `/gear flush <alt>` or `/gear flush all` reach
+  the others (all with a confirm), and the Distribution window shows a small
+  orange "!" next to the Rescan button whenever upgrades promised to you are
+  not visible anywhere — right-click it to clear the promise. The tooltip is
+  honest: the mail may simply still be in transit.
+
 ## 0.2.2 - 2026-10-10 (stable)
 
 ### Fixed

@@ -496,6 +496,23 @@ function addon.UpdateDistMailBtn()
     end
 end
 
+-- the alert icon's state, fourth member of the Update*Btn family: visible
+-- only when the current character's ledger holds promises the fresh draft
+-- cannot see anywhere. Same contract as the trio - safe with no frame,
+-- called from every RefreshDistribution (which builds _distSuggestions
+-- first, so the verdict the icon reads is always the one on screen)
+function addon.UpdateDistStaleAlert()
+    local btn = distFrame and distFrame.StaleIncomingButton
+    if not btn then
+        return
+    end
+    local myKey = addon.PlayerKey and addon.PlayerKey()
+    local myAlt = myKey and GearFallDB.alts[myKey] or nil
+    local unseen = addon.UnseenIncoming(myAlt, addon._distSuggestions)
+    btn._unseen = unseen
+    btn:SetShown(#unseen > 0)
+end
+
 -- the window's one-line draft summary: how many upgrades were found and
 -- for how many characters (keep-for-yourself rows count - the current
 -- character is a roster alt too), and how many are future upgrades
@@ -543,6 +560,7 @@ function addon.RefreshDistribution(force)
     addon.UpdateDistMailBtn()
     addon.UpdateDistLootBtn()
     addon.UpdateDistEquipBtn()
+    addon.UpdateDistStaleAlert()
     if not (distFrame and distFrame:IsShown()) then
         return
     end
@@ -676,6 +694,54 @@ function addon.CreateDistributionFrame()
             GameTooltip:Show()
         end)
         rescanBtn:SetScript("OnLeave", GameTooltip_Hide)
+
+        -- the stale-promise alert: lights up when the current character's
+        -- incoming ledger holds promises the fresh draft cannot see
+        -- anywhere (bags or inbox) - the mailed upgrade is either still in
+        -- transit or was returned and will never arrive. The tooltip lists
+        -- what was promised; the right-click offers the flush (the shared
+        -- action confirms, so a stray click costs nothing)
+        local staleBtn = CreateFrame("Button", nil, f)
+        staleBtn:SetSize(16, 16)
+        staleBtn:SetPoint("RIGHT", rescanBtn, "LEFT", -6, 0)
+        staleBtn:SetNormalAtlas("transmog-icon-warning-small")
+        staleBtn:SetHighlightAtlas("transmog-icon-warning-small", "ADD")
+        staleBtn:RegisterForClicks("RightButtonUp")
+        staleBtn:Hide()
+        staleBtn:SetScript("OnEnter", function(btn)
+            GameTooltip:SetOwner(btn, "ANCHOR_TOP")
+            GameTooltip:SetText("Promised upgrades not in sight", 1, 1, 1)
+            for _, e in ipairs(btn._unseen or {}) do
+                GameTooltip:AddLine(("%s - %s (promised %s ago)"):format(
+                    addon.SLOT_NAMES[e.slot] or ("slot " .. e.slot),
+                    e.inc.name or "?", addon.IncomingAgeText(e.inc.t)),
+                    1, 0.82, 0, true)
+            end
+            GameTooltip:AddLine("The mail may still be in transit - or it "
+                .. "was returned and will never arrive.", 0.8, 0.8, 0.8, true)
+            GameTooltip:AddLine("Right-click to clear the promise(s).",
+                1, 1, 1, true)
+            GameTooltip:Show()
+        end)
+        staleBtn:SetScript("OnLeave", GameTooltip_Hide)
+        staleBtn:SetScript("OnClick", function(btn, button)
+            if button ~= "RightButton" or not (MenuUtil
+                    and MenuUtil.CreateContextMenu) then
+                return
+            end
+            local myKey = addon.PlayerKey and addon.PlayerKey()
+            if not (myKey and GearFallDB.alts[myKey]) then
+                return
+            end
+            MenuUtil.CreateContextMenu(btn, function(_, root)
+                root:CreateTitle("Promised upgrades not in sight")
+                root:CreateButton(("Clear the promise(s) (%d)"):format(
+                    #(btn._unseen or {})), function()
+                    addon.FlushIncomingLedger({ myKey })
+                end)
+            end)
+        end)
+        f.StaleIncomingButton = staleBtn
 
         local mailBtn = CreateFrame("Button", nil, f, "UIPanelButtonTemplate")
         mailBtn:SetSize(170, 24)

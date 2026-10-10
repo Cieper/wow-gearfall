@@ -349,6 +349,7 @@ local function ShowUserHelp()
     addon.Print("  /gear - toggle the dashboard")
     addon.Print("  /gear mail - toggle the distribution window")
     addon.Print("  /gear update - manually update this character's gear into the roster")
+    addon.Print("  /gear flush [alt|all] - forget promised upgrades that will never arrive (asks to confirm)")
     addon.Print("  /gear itemspecs [class or item] - browse the trinket role library (or dump one item)")
     addon.Print("  /gear itemspecs conflicts - list role data conflicts")
     addon.Print("  /gear itemspecs wipe - clear the role library (asks to confirm)")
@@ -868,6 +869,183 @@ function addon.RemoveItemIgnores(itemID)
     return removed
 end
 
+-------------------------------------------------------------------------------
+-- FR-4 ledger flush: forget promises that will never be kept
+--
+-- The incoming ledger only ever clears on equip proof (the alt's own
+-- capture shows the item worn, or an Equip Arrived run proves the copy
+-- equipped), so a mailed upgrade that gets returned to its sender leaves
+-- a stale promise behind: the slot stays phantom-blocked in scoring and
+-- the recipient's window keeps "Arrived - equip it" state for gear that
+-- will never arrive. One shared action, two surfaces: the /gear flush
+-- subcommand and the Distribution window's stale-promise alert
+-- (right-click on the warning "!"). Clears the WHOLE ledger per alt - a
+-- returned letter invalidates every entry it carried, and per-slot
+-- granularity is not worth the UI.
+-------------------------------------------------------------------------------
+
+-- age of a ledger promise, for the flush messages and the Distribution
+-- alert's tooltip: "promised 5m ago" separates in-transit mail from the
+-- stale week-old entry
+function addon.IncomingAgeText(t)
+    if not t or t <= 0 then
+        return "?"
+    end
+    local s = GetServerTime() - t
+    if s < 0 then
+        s = 0
+    end
+    if s < 120 then
+        return "just now"
+    end
+    local m = math.floor(s / 60)
+    if m < 60 then
+        return ("%d minutes"):format(m)
+    end
+    local h = math.floor(m / 60)
+    if h < 48 then
+        return ("%d hours"):format(h)
+    end
+    return ("%d days"):format(math.floor(h / 24))
+end
+
+-- the stale-promise detector behind the Distribution window's alert icon:
+-- which of this alt's ledger promises have NO arrived copy in the fresh
+-- draft (nothing matching in bags or inbox). Such a promise is either
+-- still in transit (cross-realm mail can lag) or was returned and will
+-- never arrive; the icon is the call to action, the right-click the
+-- clear. Pure over (alt, suggestions) so the harness can pin it without
+-- a live frame. Only real send-time entries count (mailIncoming); the
+-- draft's sim projections never reach the stored ledger
+function addon.UnseenIncoming(alt, suggestions)
+    local unseen = {}
+    if not (alt and alt.incoming) then
+        return unseen
+    end
+    for slot, inc in pairs(alt.incoming) do
+        if inc.mailIncoming then
+            local seen = false
+            for _, s in ipairs(suggestions or {}) do
+                if s.arrived and s.item
+                    and addon.IsArrivedIncomingItem(s.item, inc) then
+                    seen = true
+                    break
+                end
+            end
+            if not seen then
+                unseen[#unseen + 1] = { slot = slot, inc = inc }
+            end
+        end
+    end
+    table.sort(unseen, function(a, b)
+        return a.slot < b.slot
+    end)
+    return unseen
+end
+
+-- one confirm per invocation (a /gear flush all never chains popups);
+-- nothing pending skips the confirm entirely. Refreshes both windows on
+-- the way out - the ledger feeds scoring and the draft alike
+function addon.FlushIncomingLedger(keys)
+    local db = GearFallDB
+    if not db then
+        addon.Print("database not loaded yet")
+        return
+    end
+    local pending = {}
+    local total = 0
+    for _, key in ipairs(keys or {}) do
+        local alt = db.alts[key]
+        if alt and alt.incoming and next(alt.incoming) then
+            local entries = {}
+            for slot, inc in pairs(alt.incoming) do
+                entries[#entries + 1] = { slot = slot, inc = inc }
+            end
+            table.sort(entries, function(a, b)
+                return a.slot < b.slot
+            end)
+            pending[#pending + 1] = { key = key, alt = alt, entries = entries }
+            total = total + #entries
+        end
+    end
+    if total == 0 then
+        addon.Print("no pending upgrades to clear")
+        return
+    end
+    local names = {}
+    for _, p in ipairs(pending) do
+        names[#names + 1] = addon.AltDisplayName(p.key)
+    end
+    ConfirmAction(("Forget %d promised upgrade(s) for %s? GearFall will no "
+        .. "longer wait for them to arrive."):format(total,
+            table.concat(names, ", ")), function()
+        for _, p in ipairs(pending) do
+            local parts = {}
+            for _, e in ipairs(p.entries) do
+                parts[#parts + 1] = ("%s - %s (promised %s ago)"):format(
+                    addon.SLOT_NAMES[e.slot] or ("slot " .. e.slot),
+                    e.inc.name or e.inc.itemLink or "?",
+                    addon.IncomingAgeText(e.inc.t))
+            end
+            p.alt.incoming = nil
+            addon.Print(("flushed %d pending upgrade(s) for %s: %s"):format(
+                #p.entries, addon.AltDisplayName(p.key),
+                table.concat(parts, ", ")))
+        end
+        if addon.RefreshDistribution then
+            addon.RefreshDistribution(true)
+        end
+        if addon.RefreshPriorityList then
+            addon.RefreshPriorityList()
+        end
+    end)
+end
+
+---@param argText string?
+local function CmdFlush(argText)
+    local db = GearFallDB
+    if not db then
+        addon.Print("database not loaded yet")
+        return
+    end
+    local trimmed = argText and argText:match("^%s*(.-)%s*$") or ""
+    if trimmed:lower() == "all" then
+        local keys = {}
+        for key in pairs(db.alts) do
+            keys[#keys + 1] = key
+        end
+        addon.FlushIncomingLedger(keys)
+        return
+    end
+    if trimmed == "" then
+        local key = addon.PlayerKey()
+        if not key or not db.alts[key] then
+            addon.Print("no roster entry for this character yet - try /gear update")
+            return
+        end
+        if not (db.alts[key].incoming and next(db.alts[key].incoming)) then
+            addon.Print("no pending upgrades promised to you")
+            for k, a in pairs(db.alts) do
+                if a.incoming and next(a.incoming) then
+                    addon.Print(("(%s still holds pending upgrades - "
+                        .. "/gear flush all clears every ledger)")
+                        :format(addon.AltDisplayName(k)))
+                    break
+                end
+            end
+            return
+        end
+        addon.FlushIncomingLedger({ key })
+        return
+    end
+    local keys = MatchAlts(trimmed)
+    if #keys == 0 then
+        addon.Print(("no alt matching \"%s\""):format(trimmed))
+        return
+    end
+    addon.FlushIncomingLedger(keys)
+end
+
 local function ShowRoleConflicts()
     local store = GearFallDB and GearFallDB.itemRoles
     local count = 0
@@ -1010,6 +1188,8 @@ function SlashCmdList.GEARFALL(msg)
         end
     elseif cmd == "update" then
         CmdUpdate()
+    elseif cmd == "flush" then
+        CmdFlush(argText)
     elseif cmd == "itemspecs" then
         CmdItemspecs(argText)
     elseif cmd == "wipe" then
