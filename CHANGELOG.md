@@ -2,7 +2,7 @@
 
 GearFall — route Warbound gear to the alt that needs it most.
 
-## Unreleased
+## 0.3.0 - 2026-10-10 (stable)
 
 ### Added
 
