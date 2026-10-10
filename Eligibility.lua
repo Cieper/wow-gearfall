@@ -773,7 +773,13 @@ function addon.IsItemEligibleForAlt(itemInfo, alt)
 
     -- Unique-Equipped items (rings etc.) cannot be worn twice; a second copy
     -- is only useful as a swap of the existing one, so target the slot that
-    -- already wears the same itemID (identity = itemID, not name)
+    -- already wears the same itemID (identity = itemID, not name). A copy
+    -- already INBOUND for a Unique-Equipped item (real send ledger or the
+    -- draft's simulated projection) pins the same way: two copies can never
+    -- be worn side by side, so the duplicate is scored against the slot the
+    -- first copy will fill - same-item delta 0 - and falls to the next alt
+    -- or Left over. Non-unique duplicates keep both slots: two copies of the
+    -- same plain ring are legally worn one per finger.
     local uniqueSwapSlot
     if dualSlots then
         local candidateID = addon.GetItemID(itemInfo.itemLink)
@@ -783,6 +789,16 @@ function addon.IsItemEligibleForAlt(itemInfo, alt)
                 if snap and snap.itemID == candidateID then
                     uniqueSwapSlot = slot
                     break
+                end
+            end
+            if not uniqueSwapSlot and itemInfo.uniqueEquipped then
+                local incoming = alt.incoming
+                for _, slot in ipairs(dualSlots) do
+                    local inc = incoming and incoming[slot]
+                    if inc and addon.GetItemID(inc.itemLink) == candidateID then
+                        uniqueSwapSlot = slot
+                        break
+                    end
                 end
             end
         end

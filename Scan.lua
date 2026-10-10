@@ -5,6 +5,38 @@ local addonName, addon = ...
 -- item is not in the local cache yet - callers decide how to treat that.
 -- GetItemInfoInstant returns: itemID, itemType, itemSubType, itemEquipLoc,
 -- icon, classID, subClassID (NOT the legacy global order).
+
+-- Unique-Equipped detection, calibrated in-game on 120100: for a plain
+-- "Unique-Equipped" item C_Item.GetItemUniquenessByID returns isUnique=true
+-- with NO category fields (name/count/id all nil) - the -1 pseudo-category
+-- (ITEM_UNIQUE_EQUIPPED, Blizzard_FrameXMLBase Constants.lua) never shows up
+-- there. A NAMED equip-limit category ("Unique-Equipped: X (2)") carries a
+-- positive id and the category's cap; several copies are wearable unless
+-- that cap itself is 1. Plain "Unique" (hold limit) returns the same
+-- category-less shape, but a hold-limited item can never have two copies in
+-- one character's bags, so flagging it has no observable effect on the
+-- distribution.
+local ITEM_UNIQUE_EQUIPPED = ITEM_UNIQUE_EQUIPPED or -1
+
+local function IsUniqueEquipped(link)
+    if not (C_Item and C_Item.GetItemUniquenessByID) then
+        return false
+    end
+    local ok, isUnique, _, catCount, catID =
+        pcall(C_Item.GetItemUniquenessByID, link)
+    if not (ok and isUnique == true) then
+        return false
+    end
+    if catID == nil or catID == ITEM_UNIQUE_EQUIPPED then
+        return true
+    end
+    return catCount == 1
+end
+
+-- diagnostics export (Core /gear debug stats): the raw flag check beside
+-- the API's own answer, for in-game calibration
+addon.IsUniqueEquipped = IsUniqueEquipped
+
 function addon.GetItemLinkInfo(link)
     local instantID, instantType, instantSubType, itemEquipLoc, iconID,
         classIDInstant, subClassIDInstant = C_Item.GetItemInfoInstant(link)
@@ -34,6 +66,7 @@ function addon.GetItemLinkInfo(link)
         icon = iconID,
         isGear = isGear,
         itemID = instantID,
+        uniqueEquipped = IsUniqueEquipped(link),
         itemLink = addon.NormalizeItemLink(cachedLink or link),
     }
 end

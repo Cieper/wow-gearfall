@@ -249,17 +249,39 @@ function addon.ProbeItemStats(link)
 
     addon.Print("GearFall detected: "
         .. addon.FormatStatSet(addon.GetItemMainStats(link)))
+
+    -- Unique-Equipped calibration: the raw API views beside the flag the
+    -- draft actually consumes. Calibrated 120100: the plain tooltip line
+    -- comes back as isUnique=true with nil category fields; a NAMED limit
+    -- category ("Unique-Equipped: X (2)") carries a positive id and cap
+    if C_Item and C_Item.GetItemUniquenessByID then
+        local ok, isUnique, catName, catCount, catID =
+            pcall(C_Item.GetItemUniquenessByID, link)
+        addon.Print(("GetItemUniquenessByID: ok=%s isUnique=%s name=%s"
+            .. " count=%s id=%s"):format(tostring(ok), tostring(isUnique),
+            tostring(catName), tostring(catCount), tostring(catID)))
+    else
+        addon.Print("GetItemUniquenessByID: API missing")
+    end
+    if C_Item and C_Item.GetItemUniqueness then
+        local ok, limitCategory, limitMax = pcall(C_Item.GetItemUniqueness, link)
+        addon.Print(("GetItemUniqueness: ok=%s category=%s max=%s"):format(
+            tostring(ok), tostring(limitCategory), tostring(limitMax)))
+    end
+    addon.Print(("GearFall uniqueEquipped flag: %s"):format(
+        tostring(addon.IsUniqueEquipped and addon.IsUniqueEquipped(link))))
 end
 
 SLASH_GEARFALL1 = "/gearfall"
 SLASH_GEARFALL2 = "/gear"
 
 local function ReportItemScore(info, index)
-    addon.Print(("%d) %s [%s/%s req=%s cls=%s/%s]"):format(
+    addon.Print(("%d) %s [%s/%s req=%s cls=%s/%s%s]"):format(
         index, addon.FormatItem(info),
         tostring(info.invType), tostring(info.itemLevel),
         tostring(info.minLevel),
-        tostring(info.class), tostring(info.subclass)))
+        tostring(info.class), tostring(info.subclass),
+        info.uniqueEquipped and " UNIQUE-EQUIPPED" or ""))
     local matches, advice = addon.FindBestAltsForItem(info)
     if #matches == 0 then
         if advice.hold then

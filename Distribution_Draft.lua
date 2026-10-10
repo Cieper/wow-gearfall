@@ -389,7 +389,10 @@ function addon.BuildDistributionSuggestions()
     -- (two for rings/trinkets), so the best copy stays a hold and the rest
     -- fall to Left over instead of repeating the same advice per copy.
     -- The budget keys on the TARGET SLOT, not the invType: a 1H mace and a
-    -- 2H staff both fill the mainhand and compete for the same budget
+    -- 2H staff both fill the mainhand and compete for the same budget.
+    -- Unique-Equipped items are wearable once per alt, so their key is the
+    -- itemID with budget 1: two DIFFERENT unique trinkets still hold side
+    -- by side, a duplicate never does
     local holdBudget = {}
     local keptHolds, spareHolds = {}, {}
     table.sort(holds, function(a, b)
@@ -399,8 +402,11 @@ function addon.BuildDistributionSuggestions()
         return (a.rowKey or "") < (b.rowKey or "")
     end)
     for _, s in ipairs(holds) do
-        local budget = (s.item.invType == "INVTYPE_FINGER"
-            or s.item.invType == "INVTYPE_TRINKET") and 2 or 1
+        local dual = s.item.invType == "INVTYPE_FINGER"
+            or s.item.invType == "INVTYPE_TRINKET"
+        local budget = dual and not s.item.uniqueEquipped and 2 or 1
+        local uniqueID = s.item.uniqueEquipped
+            and (s.item.itemID or addon.GetItemID(s.item.itemLink)) or nil
         -- cascade: the first hold-capable alt with budget remaining gets
         -- the copy; only when every ranked alt is exhausted does it pool
         -- as a spare. Candidates carry their own verdict kind: the summary
@@ -410,8 +416,13 @@ function addon.BuildDistributionSuggestions()
         for _, e in ipairs(s.holdAlts
                 or { { key = s.hold.key, kind = s.hold.kind,
                     specs = s.hold.respecSpecs } }) do
-            local budgetKey = (e.key or "?") .. ":"
-                .. (addon.TargetSlotFor(s.item) or s.item.invType or "?")
+            local budgetKey
+            if uniqueID then
+                budgetKey = (e.key or "?") .. ":unique:" .. uniqueID
+            else
+                budgetKey = (e.key or "?") .. ":"
+                    .. (addon.TargetSlotFor(s.item) or s.item.invType or "?")
+            end
             holdBudget[budgetKey] = holdBudget[budgetKey] or 0
             if holdBudget[budgetKey] < budget then
                 holdBudget[budgetKey] = holdBudget[budgetKey] + 1
