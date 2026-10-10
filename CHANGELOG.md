@@ -2,6 +2,14 @@
 
 GearFall — route Warbound gear to the alt that needs it most.
 
+## 0.4.0 - 2026-10-10 (stable)
+
+### Added
+
+- **Bank and Warbank scanning.** Open a bank and its tabs join the scan:
+  upgrades sitting in your character bank or the account-wide Warbank now
+  draft exactly like bag and mailbox items.
+
 ## 0.3.0 - 2026-10-10 (stable)
 
 ### Added

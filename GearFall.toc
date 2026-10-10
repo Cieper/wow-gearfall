@@ -1,7 +1,7 @@
 ## Interface: 120100
 ## Title: GearFall
 ## Notes: Route Warbound/BoE gear to the alt that needs it most.
-## Version: 0.3.0
+## Version: 0.4.0
 ## SavedVariables: GearFallDB
 ## X-Curse-Project-ID: 1684880
 ## X-WoWI-ID: 27252
