@@ -6,8 +6,8 @@ local addonName, addon = ...
 -- GetItemInfoInstant returns: itemID, itemType, itemSubType, itemEquipLoc,
 -- icon, classID, subClassID (NOT the legacy global order).
 function addon.GetItemLinkInfo(link)
-    local _, instantType, instantSubType, itemEquipLoc, iconID, classIDInstant,
-        subClassIDInstant = C_Item.GetItemInfoInstant(link)
+    local instantID, instantType, instantSubType, itemEquipLoc, iconID,
+        classIDInstant, subClassIDInstant = C_Item.GetItemInfoInstant(link)
     local isGear = (classIDInstant == 2 or classIDInstant == 4)
         and (itemEquipLoc ~= "")
 
@@ -16,7 +16,7 @@ function addon.GetItemLinkInfo(link)
         C_Item.GetItemInfo(link)
     if not name then
         return { cached = false, isGear = isGear, eligible = false,
-            icon = iconID }
+            icon = iconID, itemID = instantID }
     end
 
     return {
@@ -33,6 +33,7 @@ function addon.GetItemLinkInfo(link)
         itemBind = bindType,
         icon = iconID,
         isGear = isGear,
+        itemID = instantID,
         itemLink = addon.NormalizeItemLink(cachedLink or link),
     }
 end
@@ -90,6 +91,13 @@ function addon.ScanBagsForEligibleItems()
                 -- are namespaced by their "mail:" prefix
                 info.spot = ("%d:%d"):format(bagID, slotIndex)
                 info.quantity = containerItem.stackCount
+                -- FR-9 per-instance identity: the client mints a GUID per
+                -- item instance (stable across relog/mail/trade; changes
+                -- only when the item crosses realms). Mail attachments have
+                -- no ItemLocation, so "just this copy" ignores are a
+                -- bag/bank concept by construction.
+                info.guid = C_Item.GetItemGUID(
+                    ItemLocation:CreateFromBagAndSlot(bagID, slotIndex))
                 results[#results + 1] = info
             end
         end
@@ -145,14 +153,52 @@ function addon.ScanMailForEligibleItems()
     return results
 end
 
+-- FR-9: is this item on an ignore list? Checked in tier order - the
+-- shipped defaults win over the user's permanent itemID ignores, which win
+-- over a single-copy GUID ignore. Returns the tier name for diagnostics,
+-- nil when the item is a normal candidate.
+function addon.IsIgnored(info)
+    if info.itemID and addon.DEFAULT_ITEM_IGNORES
+        and addon.DEFAULT_ITEM_IGNORES[info.itemID] then
+        return "default"
+    end
+    local db = GearFallDB
+    local ignores = db and db.ignores
+    if not ignores then
+        return nil
+    end
+    if info.itemID and ignores.items[info.itemID] then
+        return "permanent"
+    end
+    if info.guid and info.guid ~= "" and ignores.instances[info.guid] then
+        return "instance"
+    end
+    return nil
+end
+
 -- Everything that could be distributed right now: bag items always, plus
 -- the inbox while a mailbox is open (the Distribution window's own gate).
+-- Ignored items are dropped at this single choke point - nothing
+-- downstream ever sees them. The second return reports how many were
+-- dropped per tier for /gear scan diagnostics.
 function addon.ScanEligibleItems()
-    local results = addon.ScanBagsForEligibleItems()
-    if addon._mailboxOpen then
-        for _, info in ipairs(addon.ScanMailForEligibleItems()) do
+    local results = {}
+    local ignored = { default = 0, permanent = 0, instance = 0 }
+    local function consider(info)
+        local tier = addon.IsIgnored(info)
+        if tier then
+            ignored[tier] = ignored[tier] + 1
+        else
             results[#results + 1] = info
         end
     end
-    return results
+    for _, info in ipairs(addon.ScanBagsForEligibleItems()) do
+        consider(info)
+    end
+    if addon._mailboxOpen then
+        for _, info in ipairs(addon.ScanMailForEligibleItems()) do
+            consider(info)
+        end
+    end
+    return results, ignored
 end

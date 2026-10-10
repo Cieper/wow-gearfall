@@ -5,6 +5,7 @@
 ## SavedVariables: GearFallDB
 
 Util.lua
+ItemIgnores.lua
 Core.lua
 Roster.lua
 Scan.lua

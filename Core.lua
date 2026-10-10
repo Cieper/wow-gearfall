@@ -11,6 +11,9 @@ local function InitDB()
     db.alts = db.alts or {}
     db.sendHistory = db.sendHistory or {}
     db.settings = db.settings or {}
+    db.ignores = db.ignores or {}
+    db.ignores.items = db.ignores.items or {}
+    db.ignores.instances = db.ignores.instances or {}
     if db.settings.includeBoE == nil then
         db.settings.includeBoE = true
     end
@@ -314,18 +317,19 @@ end
 
 -- Shared item-argument parsing for the debug stats/score commands: accepts a
 -- shift-click link, a raw item string, or a bare numeric ID.
-local function ResolveItemArg(arg, label)
+local function ResolveItemArg(arg, label, cmd)
+    cmd = cmd or "debug"
     if not arg or arg == "" then
-        addon.Print(("usage: /gear debug %s <item link or ID>  (shift-click works)")
-            :format(label))
+        addon.Print(("usage: /gear %s %s <item link or ID>  (shift-click works)")
+            :format(cmd, label))
         return nil
     end
     local link = arg:match("item:[%w:%-%+%.]+")
     if not link then
         local id = tonumber(arg)
         if not id then
-            addon.Print(("usage: /gear debug %s <item link or ID>  (shift-click works)")
-                :format(label))
+            addon.Print(("usage: /gear %s %s <item link or ID>  (shift-click works)")
+                :format(cmd, label))
             return nil
         end
         if C_Item and C_Item.LinkForItemID then
@@ -348,6 +352,7 @@ local function ShowUserHelp()
     addon.Print("  /gear itemspecs [class or item] - browse the trinket role library (or dump one item)")
     addon.Print("  /gear itemspecs conflicts - list role data conflicts")
     addon.Print("  /gear itemspecs wipe - clear the role library (asks to confirm)")
+    addon.Print("  /gear ignore <item> [once] | remove <item> | list - ignore rules (help: /gear ignore)")
     addon.Print("  /gear wipe - reset everything (asks to confirm)")
     addon.Print("  /gear debug help - diagnostics and debug output")
 end
@@ -390,7 +395,7 @@ end
 
 local function DebugScanBags()
     local ok, err = pcall(function()
-        local results = addon.ScanEligibleItems()
+        local results, ignored = addon.ScanEligibleItems()
         local gearCount, eligibleCount = 0, 0
         for _, info in ipairs(results) do
             if not info.cached then
@@ -419,6 +424,13 @@ local function DebugScanBags()
         end
         addon.Print(("scan: %d item(s), %d gear, %d eligible")
             :format(#results, gearCount, eligibleCount))
+        if ignored and (ignored.default + ignored.permanent
+            + ignored.instance) > 0 then
+            addon.Print(("scan: %d item(s) ignored (shipped %d, permanent %d, "
+                .. "single copy %d) - see /gear ignore list"):format(
+                ignored.default + ignored.permanent + ignored.instance,
+                ignored.default, ignored.permanent, ignored.instance))
+        end
     end)
     if not ok then
         addon.Print("scan FAILED: " .. tostring(err))
@@ -648,6 +660,214 @@ local function CmdWipeRoleData()
         .. "roster untouched)"):format(count))
 end
 
+-------------------------------------------------------------------------------
+-- FR-9: /gear ignore - keep items out of every scan, verdict and window
+-------------------------------------------------------------------------------
+
+local function IgnoredItemName(link, itemID)
+    local name = C_Item.GetItemInfo and select(1, C_Item.GetItemInfo(link))
+    return name or ("item %s"):format(tostring(itemID))
+end
+
+local function ShowIgnoreHelp()
+    addon.Print("GearFall ignore commands:")
+    addon.Print("  /gear ignore <item link or ID> - ignore the item everywhere "
+        .. "(all copies, all characters)")
+    addon.Print("  /gear ignore <item link or ID> once - ignore one specific bag "
+        .. "copy by its item GUID; other copies stay eligible")
+    addon.Print("  /gear ignore remove <item link or ID> - remove the item from "
+        .. "the ignore list (both tiers)")
+    addon.Print("  /gear ignore list - show what is currently ignored")
+    addon.Print("  Right-click a row in the Distribution window to ignore an "
+        .. "item straight from the list.")
+end
+
+local function ListIgnores()
+    local db = GearFallDB
+    local ignores = db and db.ignores
+    if not ignores then
+        addon.Print("database not loaded yet")
+        return
+    end
+    local shipped = 0
+    for itemID in pairs(addon.DEFAULT_ITEM_IGNORES or {}) do
+        shipped = shipped + 1
+        addon.Print(("  shipped: %d"):format(itemID))
+    end
+    local permanent = 0
+    for itemID, entry in pairs(ignores.items) do
+        permanent = permanent + 1
+        addon.Print(("  permanent: %s (%s, since %s)"):format(tostring(itemID),
+            tostring(entry.name or "?"),
+            entry.t and date("%Y-%m-%d", entry.t) or "?"))
+    end
+    local instances = 0
+    for guid, entry in pairs(ignores.instances) do
+        instances = instances + 1
+        addon.Print(("  one copy: %s (%s, since %s)"):format(
+            tostring(guid):sub(1, 32) .. "...",
+            tostring(entry.itemID or "?"),
+            entry.t and date("%Y-%m-%d", entry.t) or "?"))
+    end
+    addon.Print(("ignored: %d shipped, %d permanent item(s), %d single copy(ies)")
+        :format(shipped, permanent, instances))
+end
+
+---@param argText string?
+local function CmdIgnore(argText)
+    local trimmed = argText and argText:match("^%s*(.-)%s*$") or ""
+    local db = GearFallDB
+    if not db then
+        addon.Print("database not loaded yet")
+        return
+    end
+    db.ignores = db.ignores or {}
+    db.ignores.items = db.ignores.items or {}
+    db.ignores.instances = db.ignores.instances or {}
+
+    if trimmed == "" or trimmed:lower() == "help" then
+        ShowIgnoreHelp()
+        return
+    end
+    if trimmed:lower() == "list" then
+        ListIgnores()
+        return
+    end
+
+    -- "remove <item>" strips both tiers for that itemID
+    local removeArg = trimmed:match("^remove%s+(.+)$")
+    if removeArg then
+        local link = ResolveItemArg(removeArg, "remove", "ignore")
+        if not link then
+            return
+        end
+        local itemID = addon.GetItemID(link)
+        if not itemID then
+            addon.Print("could not read an itemID from that link")
+            return
+        end
+        local removed = addon.RemoveItemIgnores(itemID)
+        if #removed == 0 then
+            addon.Print(("%s is not on the ignore list")
+                :format(IgnoredItemName(link, itemID)))
+        else
+            addon.Print(("removed %s ignore for %s"):format(
+                table.concat(removed, " + "), IgnoredItemName(link, itemID)))
+            if addon.RefreshDistribution then
+                addon.RefreshDistribution()
+            end
+        end
+        return
+    end
+
+    -- "<item> once" ignores one bag copy by its GUID
+    local itemArg, onceMode = trimmed:match("^(.-)%s+once$")
+    itemArg = itemArg or trimmed
+    if itemArg == "" then
+        ShowIgnoreHelp()
+        return
+    end
+    local link = ResolveItemArg(itemArg, "", "ignore")
+    if not link then
+        return
+    end
+    local itemID = addon.GetItemID(link)
+    if not itemID then
+        addon.Print("could not read an itemID from that link")
+        return
+    end
+    local name = IgnoredItemName(link, itemID)
+
+    if not onceMode then
+        addon.IgnoreItemPermanently(itemID, link)
+        return
+    end
+
+    local copies = {}
+    for _, info in ipairs(addon.ScanBagsForEligibleItems()) do
+        if info.itemID == itemID then
+            copies[#copies + 1] = info
+        end
+    end
+    if #copies == 0 then
+        addon.Print(("no copy of %s found in your bags"):format(name))
+        return
+    end
+    if #copies > 1 then
+        addon.Print(("%d copies of %s in your bags - right-click its row in "
+            .. "the Distribution window (/gear mail) to ignore one specific "
+            .. "copy"):format(#copies, name))
+        return
+    end
+    local copy = copies[1]
+    addon.IgnoreItemCopy(copy.guid, itemID, copy.bagID, copy.slotIndex, name)
+end
+
+-- shared ignore actions (FR-9): one source of truth, used by the
+-- /gear ignore submenu AND the Distribution row context menu
+function addon.IgnoreItemPermanently(itemID, link)
+    local db = GearFallDB
+    if not db or not itemID then
+        return
+    end
+    db.ignores = db.ignores or {}
+    db.ignores.items = db.ignores.items or {}
+    local name = IgnoredItemName(link, itemID)
+    db.ignores.items[itemID] = { t = GetServerTime(), name = name }
+    addon.Print(("ignored permanently: %s (itemID %d, all copies, all "
+        .. "characters)"):format(name, itemID))
+    if addon.RefreshDistribution then
+        addon.RefreshDistribution()
+    end
+end
+
+function addon.IgnoreItemCopy(guid, itemID, bagID, slotIndex, name)
+    local db = GearFallDB
+    if not db or not guid or guid == "" or not itemID then
+        return
+    end
+    db.ignores = db.ignores or {}
+    db.ignores.instances = db.ignores.instances or {}
+    db.ignores.instances[guid] = { itemID = itemID, t = GetServerTime() }
+    addon.Print(("ignored this copy of %s only (bag %d slot %d); other copies "
+        .. "stay eligible"):format(tostring(name or ("item " .. itemID)),
+            bagID or -1, slotIndex or -1))
+    if addon.RefreshDistribution then
+        addon.RefreshDistribution()
+    end
+end
+
+-- removes the permanent entry and every single-copy entry for this itemID;
+-- returns the removed-tier summary table (empty = nothing was on the list)
+function addon.RemoveItemIgnores(itemID)
+    local db = GearFallDB
+    if not db or not itemID then
+        return {}
+    end
+    db.ignores = db.ignores or {}
+    db.ignores.items = db.ignores.items or {}
+    db.ignores.instances = db.ignores.instances or {}
+    local removed = {}
+    if db.ignores.items[itemID] then
+        db.ignores.items[itemID] = nil
+        removed[#removed + 1] = "permanent"
+    end
+    local stale = {}
+    for guid, entry in pairs(db.ignores.instances) do
+        if entry.itemID == itemID then
+            stale[#stale + 1] = guid
+        end
+    end
+    for _, guid in ipairs(stale) do
+        db.ignores.instances[guid] = nil
+    end
+    if #stale > 0 then
+        removed[#removed + 1] = (#stale == 1 and "1 single-copy entry"
+            or (#stale .. " single-copy entries"))
+    end
+    return removed
+end
+
 local function ShowRoleConflicts()
     local store = GearFallDB and GearFallDB.itemRoles
     local count = 0
@@ -794,6 +1014,8 @@ function SlashCmdList.GEARFALL(msg)
         CmdItemspecs(argText)
     elseif cmd == "wipe" then
         CmdWipe()
+    elseif cmd == "ignore" then
+        CmdIgnore(argText)
     elseif cmd == "debug" then
         CmdDebug(argText)
     elseif cmd == "help" then

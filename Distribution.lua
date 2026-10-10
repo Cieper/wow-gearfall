@@ -212,9 +212,52 @@ function GearFallDistributionRowMixin:Populate(data)
     end
 end
 
+-- FR-9 context menu, data-only so the harness can pin the option set per
+-- location: bag rows (with a GUID) get both tiers, mail rows only the
+-- permanent one (attachments have no ItemLocation, hence no GUID)
+function addon.IgnoreMenuEntries(item)
+    local entries = {}
+    if not item or not item.itemID then
+        return entries
+    end
+    entries[#entries + 1] = {
+        text = "Ignore permanently (all copies, all characters)",
+        permanent = true,
+    }
+    if item.location == "bag" and item.guid and item.guid ~= "" then
+        entries[#entries + 1] = {
+            text = "Ignore just this copy",
+            once = true,
+        }
+    end
+    return entries
+end
+
 function GearFallDistributionRowMixin:OnClick(button)
     local data = self._data
-    if not data or button == "RightButton" then
+    if not data then
+        return
+    end
+    if button == "RightButton" then
+        if data.item and data.item.itemID and MenuUtil
+            and MenuUtil.CreateContextMenu
+            and addon.IgnoreMenuEntries then
+            MenuUtil.CreateContextMenu(self, function(root)
+                root:CreateTitle(data.item.name or "Item")
+                for _, entry in ipairs(addon.IgnoreMenuEntries(data.item)) do
+                    root:CreateButton(entry.text, function()
+                        if entry.permanent then
+                            addon.IgnoreItemPermanently(data.item.itemID,
+                                data.item.itemLink)
+                        elseif entry.once then
+                            addon.IgnoreItemCopy(data.item.guid,
+                                data.item.itemID, data.item.bagID,
+                                data.item.slotIndex, data.item.name)
+                        end
+                    end)
+                end
+            end)
+        end
         return
     end
     if data.item and data.item.itemLink then
