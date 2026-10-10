@@ -242,7 +242,10 @@ function GearFallDistributionRowMixin:OnClick(button)
         if data.item and data.item.itemID and MenuUtil
             and MenuUtil.CreateContextMenu
             and addon.IgnoreMenuEntries then
-            MenuUtil.CreateContextMenu(self, function(root)
+            -- Blizzard's generator convention (Menu.PopulateDescription):
+            -- generator(ownerRegion, rootDescription) - the owner region is
+            -- the FIRST argument, the root description the second
+            MenuUtil.CreateContextMenu(self, function(_, root)
                 root:CreateTitle(data.item.name or "Item")
                 for _, entry in ipairs(addon.IgnoreMenuEntries(data.item)) do
                     root:CreateButton(entry.text, function()
