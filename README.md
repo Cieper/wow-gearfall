@@ -2,7 +2,7 @@
 
 GearFall is a gear-distribution planner for alt-aholics on WoW: Midnight. It learns about your characters, scans your bags and mailbox for Warbound-until-equipped and BoE gear, decides per item which alt benefits most, and gets it there with one click at the mailbox. No more vendoring a staff your mage would have loved, no more struggling on your new rogue while a pair of epic daggers collect dust in your bank.
 
-**How it works:** Whenever you play a character, GearFall records your class, level, spec, and equipment — and keeps that picture current as you gear up. Open your mailbox and it scans your bags and mailbox for Warbound or BoE gear, walks your priority list, and shows the plan: "Those shoulders you looted from that rare are an upgrade for your Paladin, and the staff is an upgrade for your Druid." Like some characters more than others? Prioritize them — your Warrior gets upgraded before your Rogue. No background scanning: it costs nothing during normal play.
+**How it works:** Whenever you play a character, GearFall records your class, level, spec, and equipment — and keeps that picture current as you gear up. Open your mailbox and it scans your bags and mailbox for Warbound or BoE gear, walks your priority list, and shows the plan: "Those shoulders you looted from that rare are an upgrade for your Paladin, and the staff is an upgrade for your Druid." Like some characters more than others? Prioritize them! Your Warrior gets that new necklace, instead of your neglected Rogue that's still wearing their [Heart of Azeroth]. No background scanning: it costs nothing during normal play.
 
 **Features:**
 
