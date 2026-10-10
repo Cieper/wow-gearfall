@@ -2,6 +2,15 @@
 
 GearFall — route Warbound gear to the alt that needs it most.
 
+## 0.2.2 - 2026-10-10 (stable)
+
+### Fixed
+
+- **Grey/white items are no longer suggested as "save for later" when they can
+  never be an upgrade.** A Poor or Common item whose target slot is already
+  worn (or awaited in the mail) at Uncommon quality or better can never beat
+  it, no matter the level or the raw item level.
+
 ## 0.2.1 - 2026-10-10 (beta)
 
 ### Added
