@@ -133,7 +133,7 @@
 
     <Button name="GearFallDistributionRowTemplate" virtual="true"
             mixin="GearFallDistributionRowMixin"
-            registerForClicks="LeftButtonUp">
+            registerForClicks="LeftButtonUp RightButtonUp">
         <Size x="1" y="20"/>
         <Layers>
             <Layer level="BACKGROUND">
